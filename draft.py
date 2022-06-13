@@ -141,14 +141,21 @@ class DataGenerator(Sequence):
         mask_batch = []
         for i, row in enumerate(batch_df.itertuples()):
             image_i = load_an_image(row.image)
-            image_i = resize_and_rescale(image_i, target_size=self.target_size)
-            #  data augmentation here
-            image_batch.append(tf.expand_dims(image_i, axis=0))
 
+            # load an image
             if self.train:
                 mask_i = load_an_image(row.mask)
-                mask_i = resize_and_rescale(mask_i, target_size=self.target_size, binarize=True, foreground=0)
-                # weighted mask
+            else:
+                mask_i = None
+
+            # data preprocessing
+            image_i, mask_i = padding_crop_and_rescale(image_i, mask_i, target_size=self.target_size, foreground=0)
+
+            # *: data augmentation here
+
+            # append to arrays
+            image_batch.append(tf.expand_dims(image_i, axis=0))
+            if self.train:
                 mask_batch.append(tf.expand_dims(mask_i, axis=0))
             else:
                 mask_batch.append(None)
@@ -179,20 +186,22 @@ def load_an_image(image_path):
     return image
 
 
-def crop_and_rescale(image, mask, target_size, foreground=0):
+def padding_crop_and_rescale(image, mask, target_size, foreground=0):
     process_mask = mask is not None
 
     if process_mask:
         assert image.shape == mask.shape, "image.shape != mask.shape"
 
-    cropped_height = max(image.shape[-3], target_size[0])
-    cropped_width = max(image.shape[-2], target_size[1])
+    # cropped_height = max(image.shape[-3], target_size[0])
+    # cropped_width = max(image.shape[-2], target_size[1])
 
-    image = tf.image.resize_with_crop_or_pad(image, target_height=cropped_height, target_width=cropped_width)
+    image = tf.image.resize_with_crop_or_pad(image, target_height=target_size[0], target_width=target_size[1])
+    image = tf.cast(image, dtype=tf.float32)
     image = image / 255.0
 
     if process_mask:
-        mask = tf.image.resize_with_crop_or_pad(mask, target_height=cropped_height, target_width=cropped_width)
+        mask = tf.image.resize_with_crop_or_pad(mask, target_height=target_size[0], target_width=target_size[1])
+
         if foreground == 0:
             mask = tf.cast(mask < tf.math.reduce_mean(mask), tf.float32)
         elif foreground == 1:
@@ -201,6 +210,10 @@ def crop_and_rescale(image, mask, target_size, foreground=0):
             raise RuntimeError("resize_and_rescale, unsupported foreground: {}".format(foreground))
 
     return image, mask
+
+
+def data_augmentation(image, mask):
+    pass
 
 
 def main():
