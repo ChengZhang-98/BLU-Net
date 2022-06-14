@@ -1,7 +1,10 @@
-import os
 import glob
-from functools import partial
+import os
+import itertools
 
+import cv2
+import matplotlib.pyplot as plt
+import pandas as pd
 import tensorflow as tf
 from keras.layers import (Input,
                           Conv2D,
@@ -11,11 +14,6 @@ from keras.layers import (Input,
                           Concatenate)
 from keras.models import Model
 from keras.utils import Sequence
-import numpy as np
-import pandas as pd
-import cv2
-
-import matplotlib.pyplot as plt
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -130,8 +128,11 @@ class DataGenerator(Sequence):
         self.data_df = get_paired_data_df(image_dir=image_dir, image_type=image_type,
                                           mask_dir=mask_dir, mask_type=mask_type,
                                           dataset=dataset)
-        if seed is not None:
-            self.data_df = self.data_df.sample(frac=1, random_state=self.seed, ignore_index=True)
+        if seed is None:
+            self.seed_gen = itertools.count(start=0, step=1)
+        else:
+            self.seed_gen = itertools.count(start=seed, step=1)
+            self.data_df = self.data_df.sample(frac=1, random_state=seed, ignore_index=True)
 
         self.batch_counts = int(len(self.data_df) / batch_size)
 
@@ -171,7 +172,7 @@ class DataGenerator(Sequence):
         return self.batch_counts
 
     def on_epoch_end(self):
-        self.data_df = self.data_df.sample(frac=1)
+        self.data_df = self.data_df.sample(frac=1, random_state=next(self.seed_gen))
 
 
 def load_an_image(image_path):
