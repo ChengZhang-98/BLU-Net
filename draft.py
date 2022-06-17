@@ -193,9 +193,6 @@ def padding_crop_and_rescale(image, mask, target_size, foreground=0):
     if process_mask:
         assert image.shape == mask.shape, "image.shape != mask.shape"
 
-    # cropped_height = max(image.shape[-3], target_size[0])
-    # cropped_width = max(image.shape[-2], target_size[1])
-
     image = tf.image.resize_with_crop_or_pad(image, target_height=target_size[0], target_width=target_size[1])
     image = tf.cast(image, dtype=tf.float32)
     image = image / 255.0

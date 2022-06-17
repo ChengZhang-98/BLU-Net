@@ -6,7 +6,7 @@ function convertContours2Mask(input_dir, input_file, output_dir){
 	run("To ROI Manager");
 	roiManager("Deselect");
 	roiManager("Combine");
-	run("Make Inverse");
+	// run("Make Inverse");
 	run("Create Mask");
 	input_file_split = split(input_file, ".tif");
 	input_file_name = input_file_split[0];
