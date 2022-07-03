@@ -1,3 +1,5 @@
+import tensorflow as tf
+from keras.losses import BinaryCrossentropy
 from keras.layers import (Input,
                           Conv2D,
                           MaxPooling2D,
@@ -73,3 +75,10 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
     unet_model = Model(inputs=inputs, outputs=output, name="Uncompiled_Unet")
 
     return unet_model
+
+
+def pixel_wise_weighted_binary_crossentropy_loss(y_true, y_pred):
+    mask_batch, weight_map_batch = tf.unstack(y_true, axis=-1)
+    pixel_wise_bce_loss = BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)(mask_batch, y_pred)
+    weighted_pixel_wise_bce_loss = tf.multiply(tf.expand_dims(pixel_wise_bce_loss, -1), weight_map_batch)
+    return tf.reduce_mean(weighted_pixel_wise_bce_loss, [-3, -2, -1])

@@ -15,17 +15,9 @@ from tqdm import tqdm
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
-
-
-def pixel_wise_weighted_binary_crossentropy_loss(y_true, y_pred):
-    mask_batch, weight_map_batch = tf.unstack(y_true, axis=-1)
-    pixel_wise_bce_loss = BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)(mask_batch, y_pred)
-    weighted_pixel_wise_bce_loss = tf.multiply(tf.expand_dims(pixel_wise_bce_loss, -1), weight_map_batch)
-    return tf.reduce_sum(weighted_pixel_wise_bce_loss, [-3, -2, -1])
-
-
 def main1():
     from model import get_uncompiled_unet
+    from data import DataGenerator
     seed = 1
     batch_size = 4
     target_size = (512, 512)
