@@ -10,7 +10,9 @@ function convertContours2Mask(input_dir, input_file, output_dir){
 	run("Create Mask");
 	input_file_split = split(input_file, ".tif");
 	input_file_name = input_file_split[0];
-	saveAs("Tiff", output_dir + input_file_name + "_mask.tif");
+	// print(input_file_name);
+	// why does the first letter "i" disappear?
+	saveAs("Tiff", output_dir + "i" + input_file_name + "_mask.tif");
 	close();
 	selectWindow(input_file);
 	close();
@@ -28,6 +30,7 @@ list = getFileList(input_dir);
 file_cnt = 0;
 for(i=0;i<list.length;i++){
 	if (endsWith(list[i],".tif")){
+	}
 		convertContours2Mask(input_dir, list[i], output_dir);
 		file_cnt++;
 	}
