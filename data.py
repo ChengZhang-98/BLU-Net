@@ -284,6 +284,23 @@ def calculate_and_save_weight_maps(mask_dir, weight_map_dir, sample_size=None):
         np.save(weight_map_path, weight_map)
 
 
+def get_minimum_image_size(image_dir, image_type):
+    h_list = []
+    w_list = []
+    image_path_list = glob.glob(os.path.join(image_dir, "*." + image_type.lower()))
+    assert len(image_path_list) != 0, "No {} files in this directory {}".format(image_type, image_dir)
+
+    for image_path in image_path_list:
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        h_list.append(image.shape[0])
+        w_list.append(image.shape[1])
+
+    h_min = min(h_list)
+    w_min = min(w_list)
+    print("{} images found. Minimum image size: h x w = {} x {}".format(len(image_path_list), h_min, w_min))
+    return h_min, w_min
+
+
 if __name__ == '__main__':
     image_dir = "../../Dataset/DIC_Set/DIC_Set1_Annotated"
     image_type = "tif"
