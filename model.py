@@ -1,14 +1,19 @@
+import os
+
+import keras.backend
 import tensorflow as tf
-from keras.losses import BinaryCrossentropy
+from keras import metrics
 from keras.layers import (Input,
                           Conv2D,
                           MaxPooling2D,
                           Dropout,
                           UpSampling2D,
                           Concatenate)
+from keras.losses import BinaryCrossentropy
+from keras.metrics import BinaryAccuracy, BinaryIoU
 from keras.models import Model
-from keras.utils import Sequence
-import os
+from keras.optimizers import Adam
+import tensorflow_addons as tfa
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -80,15 +85,23 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
     return unet_model
 
 
-def pixel_wise_weighted_binary_crossentropy_loss(y_true, y_pred):
-    mask_batch, weight_map_batch = tf.unstack(y_true, axis=-1)
-    pixel_wise_bce_loss = BinaryCrossentropy(reduction=tf.keras.losses.Reduction.NONE)(mask_batch, y_pred)
-    weighted_pixel_wise_bce_loss = tf.multiply(tf.expand_dims(pixel_wise_bce_loss, -1), weight_map_batch)
-    return tf.reduce_mean(weighted_pixel_wise_bce_loss, [-3, -2, -1])
+def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained_weights=None):
+    unet_model = get_uncompiled_unet(input_size, final_activation=final_activation, output_classes=1, dropout=0,
+                                     levels=levels)
+    bce_loss_from_logits = final_activation != "sigmoid"
+    unet_model.compile(optimizer=Adam(learning_rate=1e-4),
+                       loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),
+                       metrics=[BinaryAccuracy(name="binary_accuracy", threshold=0.5),
+                                BinaryIoU(target_class_ids=[1], threshold=0.5, name="binary_IoU", )])
+    if pretrained_weights is not None:
+        unet_model.load_weights(filepath=pretrained_weights)
+
+    return unet_model
 
 
 if __name__ == '__main__':
-    seed = 1
+    # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
+    seed = None
     batch_size = 4
     target_size = (512, 512)
     weight_path = "./checkpoints/trained_weights/unet_agarpads_seg_evaluation2.hdf5"
@@ -100,40 +113,3 @@ if __name__ == '__main__':
     weight_map_dir = "../../Dataset/DIC_Set/DIC_Set1_Weights"
     weight_map_type = "npy"
     dataset = "DIC"
-
-    unet = get_uncompiled_unet(input_size=(*target_size, 1),
-                               final_activation="sigmoid",
-                               output_classes=1,
-                               levels=5)
-    unet.load_weights(filepath=weight_path)
-
-    from data import DataGenerator
-
-    data_gen = DataGenerator(batch_size=batch_size, dataset=dataset,
-                             image_dir=image_dir, image_type=image_type,
-                             mask_dir=mask_dir, mask_type=mask_type,
-                             weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-                             target_size=target_size, transforms=None, seed=seed)
-
-    from datetime import datetime
-
-    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    tf_board_filewriter = tf.summary.create_file_writer(logdir)
-
-    with tf_board_filewriter.as_default():
-        for batch_num, (image_batch, mask_weight_batch) in enumerate(data_gen):
-            if batch_num >= 1:
-                break
-            predicted_mask_batch = unet.predict_step(image_batch)
-            mask_batch, weight_batch = tf.unstack(mask_weight_batch, axis=-1)
-
-            tf.summary.image("Input_Images", data=image_batch, step=1, max_outputs=4,
-                             description="input images, batch_num = {}".format(batch_num))
-            tf.summary.image("Ground_Truth_Masks", data=mask_batch, step=1, max_outputs=4,
-                             description="ground truth masks, batch_num = {}".format(batch_num))
-            tf.summary.image("Weight_Maps", data=weight_batch, step=1, max_outputs=4,
-                             description="weight maps, batch_num = {}".format(batch_num))
-            tf.summary.image("Predicted_Masks", data=predicted_mask_batch, step=1, max_outputs=4,
-                             description="predicted masks, batch_num = {}".format(batch_num))
-
-    print("done")

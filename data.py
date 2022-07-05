@@ -50,10 +50,10 @@ def _load_an_image_tensor(image_path):
     """
     load an image to a tensor
     :param image_path: path to grayscale image
-    :return: HxWx1 tf.int8 tensor
+    :return: HxWx1 tf.float32 tensor
     """
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    image = tf.convert_to_tensor(image, dtype=tf.uint8)
+    image = tf.convert_to_tensor(image, dtype=tf.float32)
     image = tf.expand_dims(image, axis=-1)
     return image
 
@@ -89,7 +89,7 @@ def _padding_crop_and_rescale(image, mask, weight_map, target_size, foreground=1
 
 
 class DataGenerator(Sequence):
-    def __init__(self, batch_size, dataset,
+    def __init__(self, batch_size, dataset, mode,
                  image_dir,
                  image_type,
                  mask_dir,
@@ -101,23 +101,39 @@ class DataGenerator(Sequence):
                  seed):
         super(DataGenerator, self).__init__()
         self.batch_size = batch_size
+        self.mode = mode
         self.target_size = target_size
         self.transforms = transforms
         self.seed = seed
-        if mask_dir is not None:
-            self.train = True
-        else:
-            self.train = False
 
-        self.data_df = _get_matched_data_df(image_dir=image_dir, image_type=image_type,
-                                            mask_dir=mask_dir, mask_type=mask_type,
-                                            weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-                                            dataset=dataset)
+        assert mode.lower() in ["train", "validate",
+                                "test"], "Unsupported mode: {}. mode should be 'train'/'validate'/'test'".format(mode)
+
+        if image_dir:
+            self.data_df = _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_dir,
+                                                weight_map_type, dataset)
+            if self.seed is None:
+                self.seed_gen = itertools.count(start=0, step=1)
+            else:
+                self.seed_gen = itertools.count(start=self.seed, step=1)
+                self.data_df = self.data_df.sample(frac=1, random_state=self.seed, ignore_index=True)
+
+    @classmethod
+    def build_from_dataframe(cls, dataframe, batch_size, mode, target_size, transforms, seed):
+        data_gen = cls(batch_size, dataset=None, mode=mode,
+                       image_dir=None, image_type=None,
+                       mask_dir=None, mask_type=None,
+                       weight_map_dir=None, weight_map_type=None,
+                       target_size=target_size, transforms=transforms, seed=seed)
+        data_gen.data_df = dataframe.reset_index(drop=True)
+
         if seed is None:
-            self.seed_gen = itertools.count(start=0, step=1)
+            data_gen.seed_gen = itertools.count(start=0, step=1)
         else:
-            self.seed_gen = itertools.count(start=seed, step=1)
-            self.data_df = self.data_df.sample(frac=1, random_state=seed, ignore_index=True)
+            data_gen.seed_gen = itertools.count(start=seed, step=1)
+            data_gen.data_df = dataframe.sample(frac=1, random_state=seed, ignore_index=True)
+
+        return data_gen
 
     def __getitem__(self, index):
         """
@@ -129,15 +145,19 @@ class DataGenerator(Sequence):
         """
         batch_df = self.data_df.iloc[self.batch_size * index:self.batch_size * (index + 1), :]
         image_batch = []
-        mask_weight_map_batch = []
+        mask_batch = []
+        weight_map_batch = []
 
         for i, row in enumerate(batch_df.itertuples()):
-            image_i = _load_an_image_tensor(row.image)
-
             # load an image
-            if self.train:
+            image_i = _load_an_image_tensor(row.image)
+            # load the corresponding mask and weight map
+            if self.mode == "train":
                 mask_i = _load_an_image_tensor(row.mask)
                 weight_map_i = tf.convert_to_tensor(np.load(row.weight_map), dtype=tf.float32)
+            elif self.mode == "validate":
+                mask_i = _load_an_image_tensor(row.mask)
+                weight_map_i = None
             else:
                 mask_i = None
                 weight_map_i = None
@@ -147,28 +167,36 @@ class DataGenerator(Sequence):
                                                                       mask=mask_i,
                                                                       weight_map=weight_map_i,
                                                                       target_size=self.target_size, foreground=1)
-
+            if self.transforms is not None and self.mode == "train":
+                image_i, mask_i, weight_map_i = self.transforms(image_i, mask_i, weight_map_i)
             # *: data augmentation here
 
-            # append to arrays
             image_batch.append(image_i)
-            if self.train:
-                mask_weight_map_batch.append(tf.stack([mask_i, weight_map_i], axis=-1))
-            else:
-                mask_weight_map_batch.append(None)
+            mask_batch.append(mask_i)
+            weight_map_batch.append(weight_map_i)
 
         image_batch = tf.stack(image_batch, axis=0)
 
-        if self.train:
-            mask_weight_map_batch = tf.stack(mask_weight_map_batch, axis=0)
-
-        return image_batch, mask_weight_map_batch
+        if self.mode == "train":
+            mask_batch = tf.stack(mask_batch, axis=0)
+            weight_map_batch = tf.stack(weight_map_batch, axis=0)
+            return image_batch, mask_batch, weight_map_batch
+        elif self.mode == "validate":
+            mask_batch = tf.stack(mask_batch, axis=0)
+            return image_batch, mask_batch
+        else:
+            return image_batch, mask_batch
 
     def __len__(self):
         return int(len(self.data_df) / self.batch_size)
 
     def on_epoch_end(self):
-        self.data_df = self.data_df.sample(frac=1, random_state=next(self.seed_gen))
+        if self.mode == "train":
+            self.data_df = self.data_df.sample(frac=1, random_state=next(self.seed_gen))
+
+    def get_batch_dataframe(self, index):
+        batch_df = self.data_df.iloc[self.batch_size * index:self.batch_size * (index + 1), :]
+        return batch_df
 
 
 def _get_kernel(n: int):
@@ -311,8 +339,22 @@ if __name__ == '__main__':
     dataset = "DIC"
 
     bool_calculate_and_save_weight_maps = False
+    bool_data_generator_test = True
 
     # Data preprocessing
     # calculate and save weight map files
     if bool_calculate_and_save_weight_maps:
         calculate_and_save_weight_maps(mask_dir=mask_dir, weight_map_dir=weight_map_dir, sample_size=None)
+
+    if bool_data_generator_test:
+        data_gen_1 = DataGenerator(batch_size=4, dataset=dataset,
+                                   image_dir=image_dir, image_type=image_type,
+                                   mask_dir=mask_dir, mask_type=mask_type,
+                                   weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
+                                   target_size=(512, 512), transforms=None, seed=None)
+
+        data_gen_2 = DataGenerator.build_from_dataframe(data_gen_1.data_df.iloc[-5:, :], batch_size=2,
+                                                        target_size=(512, 512),
+                                                        transforms=None, seed=None)
+        data_gen_1.data_df = data_gen_1.data_df.iloc[:-5, :]
+    print("done")
