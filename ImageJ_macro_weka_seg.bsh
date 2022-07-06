@@ -1,5 +1,6 @@
+// Run this script with ImageJ - Plugins - Macros - Interactive Interpreter
 // Scripting the Trainable Weka Segmentation. Refer to https://imagej.net/plugins/tws/scripting
-// This script fails to work on newest ImageJ. 
+// This script fails to work on newest ImageJ.
 // Refer to https://forum.image.sc/t/scripting-trainable-weka-segmentation-apply-classifier-to-all-images-in-folder/53153/4
 // Solution:  Replacing the trainable segmentation jar file with an older version (3.2.34).
 // I removed the Trainable_Segmentation-3.3.2.jar from the Fiji.app/plugins/ folder and replaced it with a JAR-file from an older version of (3.2.34).
