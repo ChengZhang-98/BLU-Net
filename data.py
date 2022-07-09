@@ -1,4 +1,5 @@
 import glob
+import operator
 import os
 import itertools
 
@@ -10,6 +11,8 @@ from keras.losses import BinaryCrossentropy
 from keras.utils import Sequence
 from skimage import morphology as morph
 from tqdm import tqdm
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
 def _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_dir, weight_map_type, dataset):
@@ -46,46 +49,85 @@ def _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_
     return matched_df
 
 
-def _load_an_image_tensor(image_path):
-    """
-    load an image to a tensor
-    :param image_path: path to grayscale image
-    :return: HxWx1 tf.float32 tensor
-    """
+def _load_an_image_np(image_path):
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    image = tf.convert_to_tensor(image, dtype=tf.float32)
-    image = tf.expand_dims(image, axis=-1)
-    return image
+    return image.squeeze().astype(dtype=np.float32)
 
 
-def _padding_crop_and_rescale(image, mask, weight_map, target_size, foreground=1):
-    process_mask = mask is not None
-    process_weight_map = weight_map is not None
+def _center_crop_np(image, mask, weight_map, target_size):
+    start_tuple = tuple(map(lambda length_i, target_length_i: length_i // 2 - target_length_i // 2,
+                            image.shape,
+                            target_size))
+    end_tuple = tuple(map(operator.add, start_tuple, target_size))
+    slice_tuple = tuple(map(slice, start_tuple, end_tuple))
 
-    if process_mask:
-        assert image.shape == mask.shape, "image.shape != mask.shape"
-    if process_weight_map:
-        assert image.shape == weight_map.shape, "image.shape != weight_map.shape"
+    new_image = image[slice_tuple[0], slice_tuple[1]]
+    new_mask, new_weight_map = None, None
+    if mask is not None:
+        new_mask = mask[slice_tuple[0], slice_tuple[1]]
+    if weight_map is not None:
+        new_weight_map = weight_map[slice_tuple[0], slice_tuple[1]]
+    return new_image, new_mask, new_weight_map
 
-    image = tf.image.resize_with_crop_or_pad(image, target_height=target_size[0], target_width=target_size[1])
-    image = tf.cast(image, dtype=tf.float32)
-    image = image / 255.0
 
-    if process_mask:
-        mask = tf.image.resize_with_crop_or_pad(mask, target_height=target_size[0], target_width=target_size[1])
+def _random_crop_np(image, mask, weight_map, target_size):
+    margin_tuple = tuple(map(lambda length_i, target_length_i: length_i - target_length_i + 1,
+                             image.shape[0:2],
+                             target_size))
+    start_tuple = tuple(map(np.random.randint, (0, 0), margin_tuple))
+    end_tuple = tuple(map(operator.add, start_tuple, target_size))
+    slice_tuple = tuple(map(slice, start_tuple, end_tuple))
 
-        if foreground == 0:
-            mask = tf.cast(mask < tf.math.reduce_mean(mask), tf.float32)
-        elif foreground == 1:
-            mask = tf.cast(mask > tf.math.reduce_mean(mask), tf.float32)
-        else:
-            raise RuntimeError("resize_and_rescale, unsupported foreground: {}".format(foreground))
+    new_image = image[slice_tuple[0], slice_tuple[1]]
+    new_mask, new_weight_map = None, None
+    if mask is not None:
+        new_mask = mask[slice_tuple[0], slice_tuple[1]]
+    if weight_map is not None:
+        new_weight_map = weight_map[slice_tuple[0], slice_tuple[1]]
+    return new_image, new_mask, new_weight_map
 
-    if process_weight_map:
-        weight_map = tf.image.resize_with_crop_or_pad(weight_map, target_height=target_size[0],
-                                                      target_width=target_size[1])
 
-    return image, mask, weight_map
+def _center_pad_np(image, mask, weight_map, target_size, constant=0):
+    start_tuple = tuple(map(lambda target_length_i, length_i: target_length_i // 2 - length_i // 2,
+                            target_size,
+                            image.shape))
+    end_tuple = tuple(map(operator.add, start_tuple, image.shape))
+    slice_tuple = tuple(map(slice, start_tuple, end_tuple))
+
+    new_image = np.ones(target_size, dtype=image.dtype) * constant
+    new_image[slice_tuple[0], slice_tuple[1]] = image
+    new_mask, new_weight_map = None, None
+    if mask is not None:
+        new_mask = np.ones(target_size, dtype=mask.dtype) * constant
+        new_mask[slice_tuple[0], slice_tuple[1]] = mask
+    if weight_map is not None:
+        new_weight_map = np.ones(target_size, dtype=weight_map.dtype) * constant
+        new_weight_map[slice_tuple[0], slice_tuple[1]] = weight_map
+    return new_image, new_mask, new_weight_map
+
+
+def _resize_with_pad_or_random_crop_and_rescale(image, mask, weight_map, target_size, padding_constant=0):
+    if image.shape[0] > target_size[0] and image.shape[1] > target_size[1]:
+        new_image, new_mask, new_weight_map = _random_crop_np(image, mask, weight_map, target_size)
+    elif image.shape[0] < target_size[0] and image.shape[1] < target_size[1]:
+        new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, target_size, padding_constant)
+    else:
+        padding_size = (max(target_size), max(target_size))
+        new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, padding_size, padding_constant)
+        new_image, new_mask, new_weight_map = _random_crop_np(image, mask, weight_map, target_size)
+    return new_image / 255.0, new_mask / 255.0, new_weight_map
+
+
+def _resize_with_pad_or_center_crop_and_rescale(image, mask, weight_map, target_size, padding_constant=0):
+    if image.shape[0] > target_size[0] and image.shape[1] > target_size[1]:
+        new_image, new_mask, new_weight_map = _center_crop_np(image, mask, weight_map, target_size)
+    elif image.shape[0] < target_size[0] and image.shape[1] < target_size[1]:
+        new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, target_size, padding_constant)
+    else:
+        padding_size = (max(target_size), max(target_size))
+        new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, padding_size, padding_constant)
+        new_image, new_mask, new_weight_map = _center_crop_np(image, mask, weight_map, target_size)
+    return new_image / 255.0, new_mask / 255.0, new_weight_map
 
 
 class DataGenerator(Sequence):
@@ -97,13 +139,13 @@ class DataGenerator(Sequence):
                  weight_map_dir,
                  weight_map_type,
                  target_size,
-                 transforms,
+                 data_aug_transform,
                  seed):
         super(DataGenerator, self).__init__()
         self.batch_size = batch_size
         self.mode = mode
         self.target_size = target_size
-        self.transforms = transforms
+        self.data_aug_transform = data_aug_transform
         self.seed = seed
 
         assert mode.lower() in ["train", "validate",
@@ -119,12 +161,12 @@ class DataGenerator(Sequence):
                 self.data_df = self.data_df.sample(frac=1, random_state=self.seed, ignore_index=True)
 
     @classmethod
-    def build_from_dataframe(cls, dataframe, batch_size, mode, target_size, transforms, seed):
+    def build_from_dataframe(cls, dataframe, batch_size, mode, target_size, data_aug_transform, seed):
         data_gen = cls(batch_size, dataset=None, mode=mode,
                        image_dir=None, image_type=None,
                        mask_dir=None, mask_type=None,
                        weight_map_dir=None, weight_map_type=None,
-                       target_size=target_size, transforms=transforms, seed=seed)
+                       target_size=target_size, data_aug_transform=data_aug_transform, seed=seed)
         data_gen.data_df = dataframe.reset_index(drop=True)
 
         if seed is None:
@@ -150,28 +192,34 @@ class DataGenerator(Sequence):
 
         for i, row in enumerate(batch_df.itertuples()):
             # load an image
-            image_i = _load_an_image_tensor(row.image)
+            image_i = _load_an_image_np(row.image)
             # load the corresponding mask and weight map
             if self.mode == "train":
-                mask_i = _load_an_image_tensor(row.mask)
-                weight_map_i = tf.convert_to_tensor(np.load(row.weight_map), dtype=tf.float32)
-            elif self.mode == "validate":
-                mask_i = _load_an_image_tensor(row.mask)
-                weight_map_i = None
+                mask_i = _load_an_image_np(row.mask)
+                weight_map_i = np.load(row.weight_map)
             else:
-                mask_i = None
+                mask_i = _load_an_image_np(row.mask)
                 weight_map_i = None
 
             # data preprocessing
-            image_i, mask_i, weight_map_i = _padding_crop_and_rescale(image=image_i,
-                                                                      mask=mask_i,
-                                                                      weight_map=weight_map_i,
-                                                                      target_size=self.target_size, foreground=1)
-            if self.transforms is not None and self.mode == "train":
-                image_i, mask_i, weight_map_i = self.transforms(image_i, mask_i, weight_map_i)
-            # *: data augmentation here
+            if self.mode == "train":
+                image_i, mask_i, weight_map_i = \
+                    _resize_with_pad_or_random_crop_and_rescale(image=image_i, mask=mask_i, weight_map=weight_map_i,
+                                                                target_size=self.target_size, padding_constant=0)
+            else:
+                image_i, mask_i, weight_map_i = \
+                    _resize_with_pad_or_center_crop_and_rescale(image=image_i, mask=mask_i, weight_map=weight_map_i,
+                                                                target_size=self.target_size, padding_constant=0)
 
-            image_batch.append(image_i)
+            if self.data_aug_transform is not None and self.mode == "train":
+                image_i, mask_i, weight_map_i = self.data_aug_transform(image_i, mask_i, weight_map_i)
+
+            # convert numpy.ndarray to tf.Tensor
+            image_batch.append(tf.convert_to_tensor(np.expand_dims(image_i, axis=-1), dtype=tf.float32))
+            if mask_i is not None:
+                mask_i = tf.convert_to_tensor(np.expand_dims(mask_i, axis=-1), dtype=tf.float32)
+            if weight_map_i is not None:
+                weight_map_i = tf.convert_to_tensor(np.expand_dims(weight_map_i, axis=-1), dtype=tf.float32)
             mask_batch.append(mask_i)
             weight_map_batch.append(weight_map_i)
 
@@ -307,7 +355,7 @@ def calculate_and_save_weight_maps(mask_dir, weight_map_dir, sample_size=None):
         weight_map_path = os.path.join(weight_map_dir, weight_map_name)
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         weight_map = _get_seg_weights(mask, class_weights=(class_weight_1, class_weight_2))
-        weight_map = np.expand_dims(weight_map, axis=-1)
+        # weight_map = np.expand_dims(weight_map, axis=-1)
 
         np.save(weight_map_path, weight_map)
 
@@ -330,13 +378,15 @@ def get_minimum_image_size(image_dir, image_type):
 
 
 if __name__ == '__main__':
-    image_dir = "../../Dataset/DIC_Set/DIC_Set1_Annotated"
+    image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
     image_type = "tif"
-    mask_dir = "../../Dataset/DIC_Set/DIC_Set1_Masks"
+    mask_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks"
     mask_type = "tif"
-    weight_map_dir = "../../Dataset/DIC_Set/DIC_Set1_Weights"
+    weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
     weight_map_type = "npy"
     dataset = "DIC"
+
+    target_size = (256, 256)
 
     bool_calculate_and_save_weight_maps = False
     bool_data_generator_test = True
@@ -347,14 +397,18 @@ if __name__ == '__main__':
         calculate_and_save_weight_maps(mask_dir=mask_dir, weight_map_dir=weight_map_dir, sample_size=None)
 
     if bool_data_generator_test:
-        data_gen_1 = DataGenerator(batch_size=4, dataset=dataset,
+        data_gen_1 = DataGenerator(batch_size=4, dataset=dataset, mode="train",
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-                                   target_size=(512, 512), transforms=None, seed=None)
+                                   target_size=target_size, data_aug_transform=None, seed=None)
 
-        data_gen_2 = DataGenerator.build_from_dataframe(data_gen_1.data_df.iloc[-5:, :], batch_size=2,
-                                                        target_size=(512, 512),
-                                                        transforms=None, seed=None)
+        data_gen_2 = DataGenerator.build_from_dataframe(data_gen_1.data_df.iloc[-5:, :], batch_size=2, mode="validate",
+                                                        target_size=target_size,
+                                                        data_aug_transform=None, seed=None)
         data_gen_1.data_df = data_gen_1.data_df.iloc[:-5, :]
+
+        image_batch, mask_batch, weight_map_batch = data_gen_1[0]
+        print(image_batch.shape, mask_batch.shape, weight_map_batch.shape)
+
     print("done")

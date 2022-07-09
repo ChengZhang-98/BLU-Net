@@ -1,23 +1,24 @@
 import os
+from datetime import datetime
 
 import tensorflow as tf
 
+from keras import callbacks
+
+from data import DataGenerator
+from model import get_compiled_unet
+from data import DataGenerator
+
+from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, RandomRotate,
+                               RandomZoomAndShift, DataAugmentation)
+from training_utils import get_validation_plot_callback, train_val_split
+
 
 def train_unet():
-    from datetime import datetime
-
-    import tensorflow as tf
-    from data import DataGenerator
-    from model import get_compiled_unet
-    from data import DataGenerator
-    from keras import callbacks
-
-    from training_utils import get_validation_plot_callback, train_val_split
-
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = None
     batch_size = 2
-    target_size = (512, 512)
+    target_size = (256, 256)
     pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/" \
                              "unet_agarpads_seg_evaluation2.hdf5"
 
@@ -37,11 +38,17 @@ def train_unet():
                              levels=5,
                              pretrained_weights=pretrained_weight_path)
 
+    data_augmentation_transform = DataAugmentation([HistogramVoodoo(),
+                                                    ElasticDeform(sigma=20),
+                                                    GaussianNoise(sigma=1 / 255),
+                                                    RandomFlip(),
+                                                    RandomRotate(),
+                                                    RandomZoomAndShift()])
     data_gen_train = DataGenerator(batch_size=batch_size, dataset=dataset, mode="train",
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-                                   target_size=target_size, transforms=None, seed=seed)
+                                   target_size=target_size, data_aug_transform=data_augmentation_transform, seed=seed)
     data_gen_train, data_gen_val = train_val_split(data_gen_train, 0.8, validation_batch_size=2)
 
     logdir = logdir + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

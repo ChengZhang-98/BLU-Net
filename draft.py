@@ -1,5 +1,6 @@
 import glob
 import itertools
+import operator
 import os
 import time
 import copy
@@ -39,222 +40,6 @@ class Timer(object):
         print('Elapsed: %s' % (time.time() - self.tstart))
 
 
-def illumination_voodoo(image, num_control_points: int = 5):
-    control_points = np.linspace(0, image.shape[0] - 1, num=num_control_points)
-    random_points = np.random.uniform(low=0.1, high=0.9, size=num_control_points)
-    mapping = interpolate.PchipInterpolator(control_points, random_points)
-    curve = mapping(np.linspace(0, image.shape[0] - 1, image.shape[0]))
-    # Apply this curve to the image intensity along the length of the chamebr:
-    new_image = np.multiply(
-        image,
-        np.reshape(
-            np.tile(np.reshape(curve, curve.shape + (1,)), (1, image.shape[1])),
-            image.shape,
-        ),
-    )
-    new_image = np.interp(
-        new_image, (new_image.min(), new_image.max()), (image.min(), image.max())
-    )
-
-    return new_image
-
-
-def illumination_voodoo_tf(image, num_control_points=3):
-    shape = image.shape
-    image = image.numpy().squeeze()
-
-    control_points = np.linspace(0, image.shape[0] - 1, num=num_control_points)
-    random_points = np.random.uniform(low=0.1, high=0.9, size=num_control_points)
-    mapping = interpolate.PchipInterpolator(control_points, random_points)
-    curve = mapping(np.linspace(0, image.shape[0] - 1, image.shape[0]))
-
-    new_image = np.multiply(
-        image,
-        np.reshape(
-            np.tile(np.reshape(curve, (curve.shape[0], 1)), (1, image.shape[1])),
-            image.shape,
-        ),
-    )
-    new_image = np.interp(
-        new_image, (new_image.min(), new_image.max()), (image.min(), image.max())
-    )
-    new_image = tf.reshape(tf.convert_to_tensor(new_image, dtype=tf.float32), shape=shape)
-
-    return new_image
-
-
-def histogram_voodoo(image, num_control_points: int = 3):
-    control_points = np.linspace(0, 1, num=num_control_points + 2)
-    sorted_points = copy.copy(control_points)
-    random_points = np.random.uniform(low=0.1, high=0.9, size=num_control_points)
-    sorted_points[1:-1] = np.sort(random_points)
-    mapping = interpolate.PchipInterpolator(control_points, sorted_points)
-    new_image = mapping(image)
-
-    new_image = np.interp(
-        new_image, (new_image.min(), new_image.max()), (image.min(), image.max())
-    )
-
-    return new_image
-
-
-def histogram_voodoo_tf(image, num_control_points: int = 3):
-    shape = image.shape
-    image = image.numpy().squeeze()
-
-    control_points = np.linspace(0, 1, num=num_control_points + 2)
-    sorted_points = copy.copy(control_points)
-    random_points = np.random.uniform(low=0.1, high=0.9, size=num_control_points)
-    sorted_points[1:-1] = np.sort(random_points)
-    mapping = interpolate.PchipInterpolator(control_points, sorted_points)
-    new_image = mapping(image)
-
-    new_image = np.interp(
-        new_image, (new_image.min(), new_image.max()), (image.min(), image.max())
-    )
-
-    new_image = tf.reshape(tf.convert_to_tensor(new_image, dtype=tf.float32), shape=shape)
-    return new_image
-
-
-def elasticdeform_np(image, sigma=20, points=3):
-    """
-    If you have multiple images, e.g., an image and a segmentation image,
-    you can deform both simultaneously by providing a list of inputs. You can specify a different spline order for each input.
-
-    # apply deformation to inputs X and Y
-    [X_deformed, Y_deformed] = elasticdeform.deform_random_grid([X, Y])
-
-    # apply deformation to inputs X and Y,
-    # with a different interpolation for each input
-    [X_deformed, Y_deformed] = elasticdeform.deform_random_grid([X, Y], order=[3, 0])
-    """
-    new_image = elasticdeform.deform_random_grid(image, sigma=sigma, points=points)
-    return new_image
-
-
-def elasticdeform_tf(image, mask=None, sigma=20, points=3, mode="mirror", **kwargs):
-    assert image.shape == mask.shape, "unmatched image.shape and mask.shape!"
-    shape = image.shape
-    image = image.numpy().squeeze()
-    if mask is None:
-        new_image = elasticdeform.deform_random_grid(image, sigma=sigma, points=points, order=0, mode=mode,
-                                                     axis=(0, 1), prefilter=False, **kwargs)
-        new_image = tf.reshape(tf.convert_to_tensor(new_image, dtype=tf.float32), shape=shape)
-        return new_image
-    else:
-        mask = mask.numpy().squeeze()
-        new_image, new_mask = elasticdeform.deform_random_grid([image, mask], sigma=sigma, points=points, order=0,
-                                                               mode=mode,
-                                                               axis=(0, 1), prefilter=False, **kwargs)
-        new_image = tf.reshape(tf.convert_to_tensor(new_image, dtype=tf.float32), shape=shape)
-        new_mask = tf.reshape(tf.convert_to_tensor(new_mask, dtype=tf.float32), shape=shape)
-        return new_image, new_mask
-
-
-def gaussian_noise_tf(image, sigma=0.1, clip_value_min=0, clip_value_max=1):
-    noise = tf.random.normal(shape=image.shape, mean=0, stddev=sigma)
-    new_image = tf.clip_by_value(image + noise, clip_value_min=clip_value_min, clip_value_max=clip_value_max)
-    return new_image
-
-
-def gaussian_blur_tf(image, filter_shape=(3, 3), sigma=1.0, **kwargs):
-    return tfa.image.gaussian_filter2d(image, filter_shape, sigma, **kwargs)
-
-
-def random_flip_tf(image: tf.Tensor, mask, weight_map=None):
-    # assert image.ndim == 3 and mask.ndim == 3, "Image and mask should be both HxWx1"
-
-    if weight_map is not None:
-        stacked_tensor = tf.stack([image, mask, weight_map], axis=0)
-    else:
-        stacked_tensor = tf.stack([image, mask], axis=0)
-
-    if np.random.randint(0, 2):
-        stacked_tensor = tf.image.flip_left_right(stacked_tensor)
-    if np.random.randint(0, 2):
-        stacked_tensor = tf.image.flip_up_down(stacked_tensor)
-
-    if weight_map is not None:
-        return tf.unstack(stacked_tensor, num=3, axis=0)
-    else:
-        return tf.unstack(stacked_tensor, num=2, axis=0)
-
-
-def random_rotate_tf(image, mask, weight_map=None, max_angle=0.1, fill_mode="reflect",
-                     interpolation="bilinear", **kwargs):
-    if weight_map is not None:
-        stacked_tensor = tf.stack([image, mask, weight_map], axis=0)
-    else:
-        stacked_tensor = tf.stack([image, mask], axis=0)
-    angle = np.random.uniform(-max_angle, max_angle)
-
-    stacked_tensor = tfa.image.rotate(stacked_tensor, angles=angle, fill_mode=fill_mode,
-                                      interpolation=interpolation, **kwargs)
-
-    if weight_map is not None:
-        return tf.unstack(stacked_tensor, num=3, axis=0)
-    else:
-        return tf.unstack(stacked_tensor, num=2, axis=0)
-
-
-def random_rot90_tf(image, mask, weight_map=None):
-    if weight_map is not None:
-        stacked_tensor = tf.stack([image, mask, weight_map], axis=0)
-    else:
-        stacked_tensor = tf.stack([image, mask], axis=0)
-    k = np.random.randint(0, 4)
-    stacked_tensor = tf.image.rot90(stacked_tensor, k=k)
-
-    if weight_map is not None:
-        return tf.unstack(stacked_tensor, num=3, axis=0)
-    else:
-        return tf.unstack(stacked_tensor, num=2, axis=0)
-
-
-def _zoom_and_shift(image, zoom_level: float, shift_x: float, shift_y: float, order: int = 0):
-    old_shape = image.shape
-    image = transform.rescale(image, zoom_level, mode="edge", order=2)
-    shift_x = shift_x * image.shape[0]
-    shift_y = shift_y * image.shape[1]
-    image = _shift(image, (shift_y, shift_x), order=order)
-    i0 = (
-        round(image.shape[0] / 2 - old_shape[0] / 2),
-        round(image.shape[1] / 2 - old_shape[1] / 2),
-    )
-    image = image[i0[0]: (i0[0] + old_shape[0]), i0[1]: (i0[1] + old_shape[1])]
-    return image
-
-
-def _shift(image, vector: Tuple[float, float], order: int = 1):
-    affine_transform = transform.AffineTransform(translation=vector)
-    shifted = transform.warp(image, affine_transform, mode="edge", order=order)
-
-    return shifted
-
-
-def random_zoom_and_shift_tf(image, mask, weight_map=None, beta=1.0, shift_x_max=0.05, shift_y_max=0.05):
-    zoom = np.random.exponential(beta)
-    shift_x = np.random.uniform(-shift_x_max, shift_y_max)
-    shift_y = np.random.uniform(-shift_y_max, shift_y_max)
-
-    matrix_list = [image.numpy().squeeze(), mask.numpy().squeeze()]
-    if weight_map is not None:
-        matrix_list.append(weight_map.numpy().squeeze())
-
-    new_matrix_list = []
-    for matrix in matrix_list:
-        new_matrix_list.append(_zoom_and_shift(matrix, zoom_level=zoom + 1, shift_x=shift_x, shift_y=shift_y))
-
-    new_tensor_list = list(
-        tf.expand_dims(tf.convert_to_tensor(new_matrix, dtype=tf.float32), axis=-1) for new_matrix in new_matrix_list)
-
-    if weight_map is not None:
-        return new_tensor_list[0], new_tensor_list[1], new_tensor_list[2]
-    else:
-        return new_tensor_list[0], new_tensor_list[1]
-
-
 if __name__ == '__main__':
     image_path = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated/img_000006_1.tif"
     mask_path = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks/img_000006_1_mask.tif"
@@ -269,7 +54,7 @@ if __name__ == '__main__':
     mask_tf = tf.expand_dims(tf.convert_to_tensor(mask_np, tf.float32), axis=-1)
     weight_map_tf = tf.convert_to_tensor(weight_map_np, tf.float32)
 
-    run_the_segment_show_original_photo = True
+    run_the_segment_show_original_photo = False
     run_the_segment_illumination_voodoo_tf = False
     run_the_segment_histogram_voodoo_tf = False
     run_the_segment_elasticdeform_tf = False
@@ -280,7 +65,7 @@ if __name__ == '__main__':
 
     run_the_segment_illumination_voodoo_param_cmp = False
     run_the_segment_histogram_voodoo_param_cmp = False
-    run_the_segment_elasticdeform_param_cmp = True
+    run_the_segment_elasticdeform_param_cmp = False
     run_the_segment_gaussian_noise_param_cmp = False
     run_the_segment_gaussian_blur_param_cmp = False
 
@@ -522,4 +307,10 @@ if __name__ == '__main__':
         f.savefig(os.path.join(saved_figure_dir, "Random_Zoom_Shift.jpg"))
         f.show()
 
-    print("done")
+    beta = 0.05
+    lamb = 1 / beta
+    x = np.linspace(0, 1, 500)
+    y = 1 - np.exp(-lamb * x)
+    plt.plot(x, y, label="β={}".format(beta))
+    plt.show()
+    print(y[len(y) // 2])

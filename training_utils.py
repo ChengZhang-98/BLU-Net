@@ -77,7 +77,7 @@ def train_val_split(data_gen: DataGenerator, train_ratio: float, validation_batc
                                                       batch_size=validation_batch_size,
                                                       mode="validate",
                                                       target_size=data_gen.target_size,
-                                                      transforms=None,
+                                                      data_aug_transform=None,
                                                       seed=None)
     data_gen.data_df = data_gen.data_df.iloc[:sample_for_train, :]
     return data_gen, data_gen_val
