@@ -12,7 +12,7 @@ from skimage import transform
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
-def illumination_voodoo_np(image, mask, weight_map, num_control_points=5):
+def illumination_voodoo_np(image, mask, weight_map, num_control_points=4):
     control_points = np.linspace(0, image.shape[0] - 1, num=num_control_points)
     random_points = np.random.uniform(low=0.1, high=0.9, size=num_control_points)
     mapping = interpolate.PchipInterpolator(control_points, random_points)
