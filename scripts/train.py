@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 
+import keras.callbacks
 import tensorflow as tf
 
 from keras import callbacks
@@ -18,7 +19,7 @@ def train_unet():
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = None
     batch_size = 2
-    target_size = (256, 256)
+    target_size = (512, 512)
     pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/" \
                              "unet_agarpads_seg_evaluation2.hdf5"
 
@@ -30,9 +31,13 @@ def train_unet():
     weight_map_type = "npy"
     dataset = "DIC"
 
-    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/"
+    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
-    max_epoch = 3
+    start_epoch = 0
+    end_epoch = 10
+
+    # logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_morning")
 
     unet = get_compiled_unet(input_size=(*target_size, 1),
                              levels=5,
@@ -51,26 +56,27 @@ def train_unet():
                                    target_size=target_size, data_aug_transform=data_augmentation_transform, seed=seed)
     data_gen_train, data_gen_val = train_val_split(data_gen_train, 0.8, validation_batch_size=2)
 
-    logdir = logdir + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     tensorboard_val_image_writer = tf.summary.create_file_writer(logdir + "/val_image")
 
     tensorboard_callback = callbacks.TensorBoard(log_dir=logdir)
-    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath,
-                                                                   save_weights_only=True,
-                                                                   verbosde=1,
-                                                                   monitor='val_binary_IoU',
-                                                                   mode='max',
-                                                                   save_best_only=True)
+    model_checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath,
+                                                                save_weights_only=True,
+                                                                verbosde=1,
+                                                                monitor='val_binary_accuracy',
+                                                                mode='max',
+                                                                save_best_only=True)
+    early_stopping_callback = keras.callbacks.EarlyStopping(monitor="val_binary_accuracy", patience=3,
+                                                            verbose=1, restore_best_weights=True)
     validation_plot_callback = get_validation_plot_callback(unet, data_gen_val, [0, 1],
                                                             tensorboard_val_image_writer, max_output=4)
-    callback_list = [tensorboard_callback, model_checkpoint_callback, validation_plot_callback]
+
+    callback_list = [tensorboard_callback, model_checkpoint_callback, early_stopping_callback, validation_plot_callback]
 
     print("training starts...")
-    history = unet.fit(x=data_gen_train, epochs=max_epoch,
+    history = unet.fit(x=data_gen_train, epochs=end_epoch, initial_epoch=start_epoch,
                        validation_data=data_gen_val, shuffle=False,
                        validation_freq=1, callbacks=callback_list,
-                       workers=4, use_multiprocessing=True)
-    print("training finished")
+                       workers=1, use_multiprocessing=False)
 
 
 if __name__ == '__main__':

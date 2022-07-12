@@ -99,6 +99,9 @@ def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained
     return unet_model
 
 
+
+
+
 if __name__ == '__main__':
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = None

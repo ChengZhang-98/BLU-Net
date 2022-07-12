@@ -4,6 +4,7 @@ import os
 import itertools
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -377,6 +378,30 @@ def get_minimum_image_size(image_dir, image_type):
     return h_min, w_min
 
 
+def _binarize_mask(pred_mask):
+    threshold = (np.amin(pred_mask) + np.amax(pred_mask)) / 2
+    return np.array(pred_mask > threshold, dtype=np.uint8)
+
+
+def postprocess_mask(pred_mask, square_size=5, min_size=5, crop=False):
+    """
+    Receive HxW float 32 np.ndarray with value range in [0, 1.0]
+    Return HxW np.uint8 np.ndarray with value range in [0, 255]
+    :param pred_mask:
+    :param square_size:
+    :param min_size:
+    :param crop:
+    :return:
+    """
+    binary_mask = _binarize_mask(pred_mask).astype(bool)
+    footprint = morph.square(square_size)
+    if not crop:
+        binary_mask = morph.binary_opening(binary_mask, footprint=footprint)
+    if min_size is not None:
+        binary_mask = morph.remove_small_objects(binary_mask, min_size=min_size)
+    return binary_mask.astype(np.uint8)
+
+
 if __name__ == '__main__':
     image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
     image_type = "tif"
@@ -389,7 +414,8 @@ if __name__ == '__main__':
     target_size = (256, 256)
 
     bool_calculate_and_save_weight_maps = False
-    bool_data_generator_test = True
+    bool_data_generator_test = False
+    bool_test_postprocessing = True
 
     # Data preprocessing
     # calculate and save weight map files
@@ -411,4 +437,28 @@ if __name__ == '__main__':
         image_batch, mask_batch, weight_map_batch = data_gen_1[0]
         print(image_batch.shape, mask_batch.shape, weight_map_batch.shape)
 
+    if bool_test_postprocessing:
+        from model import get_uncompiled_unet
+        from data import _center_crop_np
+
+        unet = get_uncompiled_unet(input_size=(512, 512, 1), final_activation="sigmoid", output_classes=1)
+        unet.load_weights("E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5")
+        image_path = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated/img_000007_1.tif"
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        image, _, _ = _center_crop_np(image, image, image, (512, 512))
+        f, axes = plt.subplots(1, 3, figsize=(12, 4), dpi=200)
+        axes[0].imshow(image, cmap="gray", vmin=0, vmax=255)
+        axes[0].set_title("original")
+        image = np.expand_dims(image, axis=(0, -1))
+        # print(image.shape)
+        image = tf.convert_to_tensor(image, dtype=tf.float32)
+        # print(image.shape)
+        pred_mask = unet(image, training=False)
+        pred_mask = pred_mask.numpy().squeeze()
+        axes[1].imshow(pred_mask, cmap="gray", vmin=0, vmax=1)
+        axes[1].set_title("Predicted Mask")
+        processed_mask = postprocess_mask(pred_mask)
+        axes[2].imshow(processed_mask, cmap="gray", vmin=0, vmax=1)
+        axes[2].set_title("Postprocessed Mask")
+        f.show()
     print("done")
