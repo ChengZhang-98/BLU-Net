@@ -4,8 +4,10 @@ from collections.abc import Iterable
 import pandas as pd
 import tensorflow as tf
 from keras import callbacks
+from tqdm import tqdm
 
-from data import DataGenerator
+from data import DataGenerator, postprocess_a_mask_batch
+from model import GAN
 
 
 def _callback_util_get_image_description(epoch, image_path_series: pd.Series):
@@ -48,8 +50,9 @@ def get_validation_plot_callback(model, validation_set, batch_index_to_plot, sum
             image_path_series_list = []
             for index in batch_index_to_plot:
                 image_batch_i, _ = validation_set[index]
-                predicted_mask_i = model.predict_step(image_batch_i)
-                predicted_mask_list.append(predicted_mask_i)
+                predicted_mask_batch_i = model(image_batch_i, training=False)
+                predicted_mask_batch_i = postprocess_a_mask_batch(predicted_mask_batch_i)
+                predicted_mask_list.append(predicted_mask_batch_i)
                 image_path_series_i = validation_set.get_batch_dataframe(index).loc[:, "image"]
                 image_path_series_list.append(image_path_series_i)
 
@@ -81,6 +84,86 @@ def train_val_split(data_gen: DataGenerator, train_ratio: float, validation_batc
                                                       seed=None)
     data_gen.data_df = data_gen.data_df.iloc[:sample_for_train, :]
     return data_gen, data_gen_val
+
+
+def train_gan(gan: GAN, epochs, training_set, validation_set, tf_summary_writer_val_image=None,
+              tf_summary_writer_training_scaler=None, epochs_not_train_g=3):
+    print("train discriminator but not generator in the first {} epochs".format(epochs_not_train_g))
+
+    with tf_summary_writer_val_image.as_default():
+        image_batch_val, _ = validation_set[0]
+        predicted_mask_batch = gan.generator(image_batch_val, training=False)
+        tf.summary.image("Before Training - Predicted Masks", predicted_mask_batch, step=0)
+
+    val_metric_df = pd.DataFrame(dict(epoch=[], binary_accuracy=[], binary_iou=[]))
+
+    for epoch in range(epochs):
+        print("\nStart of Epoch {}".format(epoch))
+
+        # *: train
+        train_g = epoch >= epochs_not_train_g
+        train_d = True
+        for step, (image_batch_train, mask_batch_train, weight_map_batch_train) in tqdm(enumerate(training_set)):
+            d_loss, g_loss, generated_masks = gan.train_step(image_batch_train, mask_batch_train,
+                                                             weight_map_batch_train,
+                                                             train_g=train_g, train_d=train_d)
+
+        if tf_summary_writer_training_scaler is not None:
+            with tf_summary_writer_training_scaler.as_default():
+                tf.summary.scalar("train_loss-discriminator", gan.disc_loss_tracker.result(), step=epoch)
+                if train_g:
+                    tf.summary.scalar("train_loss-generator", gan.gen_loss_tracker.result(), step=epoch)
+        else:
+            print("train_loss-discriminator = {}".format(gan.disc_loss_tracker.result()))
+            if train_g:
+                print("train_loss-generator = {}".format(gan.gen_loss_tracker.result()))
+
+        # *: validate
+        for val_batch_index, (image_batch_val, mask_batch_val) in enumerate(validation_set):
+            predicted_mask_batch = gan.generator(image_batch_val, training=False)
+            gan.metric_binary_accuracy.update_state(mask_batch_val, predicted_mask_batch)
+            gan.metric_binary_IoU.update_state(mask_batch_val, predicted_mask_batch)
+
+            if tf_summary_writer_val_image is not None:
+                with tf_summary_writer_val_image.as_default():
+                    image_path_series = validation_set.get_batch_dataframe(val_batch_index).loc[:, "image"]
+                    image_path_info = _callback_util_get_image_description(0, image_path_series)
+                    max_batch_num = 3 // validation_set.batch_size + 1
+                    if epoch == 0 and val_batch_index < max_batch_num:
+                        description_1 = "**input images** on validation dataset, " + image_path_info
+                        description_2 = "**ground truth masks** on validation dataset, " + image_path_info
+                        tf.summary.image("Input Images", image_batch_val, step=0)
+                        tf.summary.image("Ground Truth Masks", mask_batch_val, step=0)
+                    if val_batch_index < max_batch_num:
+                        description = "**predicted masks** on validation dataset, " + image_path_info
+                        tf.summary.image("Predicted Masks", predicted_mask_batch, step=epoch)
+
+        val_metric_binary_accuracy = gan.metric_binary_accuracy.result()
+        val_metric_binary_iou = gan.metric_binary_IoU.result()
+        val_metric_df = pd.concat([val_metric_df, pd.DataFrame(dict(epoch=[epoch],
+                                                                    binary_accuracy=[val_metric_binary_accuracy],
+                                                                    binary_iou=[val_metric_binary_iou]))],
+                                  ignore_index=True)
+        if tf_summary_writer_training_scaler is not None:
+            with tf_summary_writer_training_scaler.as_default():
+                tf.summary.scalar("val_metric-binary_accuracy", val_metric_binary_accuracy, step=epoch)
+                tf.summary.scalar("val_metric-binary_IoU", val_metric_binary_iou, step=epoch)
+        else:
+            print("val_metric-binary_accuracy = {}".format(val_metric_binary_accuracy))
+            print("val_metric-binary_IoU = {}".format(val_metric_binary_accuracy))
+
+        gan.reset_metric_states()
+
+    print("GAN training finished")
+    # max_ba_index = val_metric_df.loc[:, "binary_accuracy"].idxmax()
+    # max_ba_epoch = val_metric_df.iloc[max_ba_index, :].loc["epoch"]
+    # max_ba = val_metric_df.iloc[max_ba_epoch, :].loc["binary_accuracy"]
+    #
+    # max_bi_index = val_metric_df.loc[:, "binary_iou"].idxmax()
+    # max_bi_epoch = val_metric_df.iloc[max_bi_index, :].loc["epoch"]
+    # max_bi = val_metric_df.iloc[max_bi_index, :].loc["binary_iou"]
+    # print("max val-binary_accuracy: epoch = {}, binary_accuracy = {}".format(max_ba_epoch, max_ba))
+    # print("max val-binary IoU: epoch = {}, binary_IoU = {}".format(max_bi_epoch, max_bi))
 
 
 if __name__ == '__main__':

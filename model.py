@@ -1,6 +1,7 @@
 import os
 
 import keras.backend
+import numpy as np
 import tensorflow as tf
 from keras import metrics
 from keras.layers import (Input,
@@ -8,12 +9,13 @@ from keras.layers import (Input,
                           MaxPooling2D,
                           Dropout,
                           UpSampling2D,
-                          Concatenate)
+                          Concatenate, BatchNormalization, LeakyReLU, Flatten, Dense)
 from keras.losses import BinaryCrossentropy
 from keras.metrics import BinaryAccuracy, BinaryIoU
 from keras.models import Model
 from keras.optimizers import Adam
 import tensorflow_addons as tfa
+from tqdm import tqdm
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -99,7 +101,105 @@ def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained
     return unet_model
 
 
+def _get_conv_block(x, filters, activation,
+                    kernel_size=(3, 3), strides=(1, 1), padding="same", use_bias=True,
+                    use_bn=False, use_dropout=False, drop_value=0.5):
+    x = Conv2D(filters, kernel_size, strides=strides, padding=padding, use_bias=use_bias)(x)
+    if use_bn:
+        x = BatchNormalization()(x)
+    x = activation(x)
+    if use_dropout:
+        x = Dropout(drop_value)(x)
+    return x
 
+
+def get_discriminator(input_size, dropout=0.2):
+    inputs = Input(input_size)
+
+    x = _get_conv_block(inputs, 64, kernel_size=(5, 5), strides=(2, 2),
+                        use_bn=False, use_bias=True, activation=LeakyReLU(0.2),
+                        use_dropout=False, drop_value=0.3)
+    x = _get_conv_block(x, 128, kernel_size=(5, 5), strides=(2, 2),
+                        use_bn=False, activation=LeakyReLU(0.2), use_bias=True,
+                        use_dropout=True, drop_value=0.3)
+    x = _get_conv_block(x, 256, kernel_size=(5, 5), strides=(2, 2),
+                        use_bn=False, activation=LeakyReLU(0.2), use_bias=True,
+                        use_dropout=True, drop_value=0.3)
+    x = _get_conv_block(x, 512, kernel_size=(5, 5),
+                        strides=(2, 2), use_bn=False, activation=LeakyReLU(0.2),
+                        use_bias=True, use_dropout=False, drop_value=0.3)
+
+    x = Flatten()(x)
+    x = Dropout(0.2)(x)
+    y = Dense(1)(x)
+
+    return Model(inputs, y, name="discriminator")
+
+
+class GAN:
+    def __init__(self, discriminator, generator):
+        self.discriminator = discriminator
+        self.generator = generator
+        self.gen_loss_tracker = keras.metrics.Mean(name="train-generator_loss")
+        self.disc_loss_tracker = keras.metrics.Mean(name="train-discriminator_loss")
+        self.metric_binary_accuracy = keras.metrics.BinaryAccuracy("val-binary_accuracy")
+        self.metric_binary_IoU = keras.metrics.BinaryIoU(name="val-binary_IoU", target_class_ids=[1])
+
+        self.d_optimizer, self.g_optimizer = None, None
+        self.loss_fn_adversarial, self.loss_fn_segmentation = None, None
+        self.lamda = 1
+
+    def reset_metric_states(self):
+        self.disc_loss_tracker.reset_state()
+        self.gen_loss_tracker.reset_state()
+        self.metric_binary_accuracy.reset_state()
+
+    def compile(self, d_optimizer, g_optimizer, loss_fn_adversarial, loss_fn_segmentation, lamda=1.0):
+        self.d_optimizer = d_optimizer
+        self.g_optimizer = g_optimizer
+        self.loss_fn_adversarial = loss_fn_adversarial
+        self.loss_fn_segmentation = loss_fn_segmentation
+        self.lamda = lamda
+
+    def train_step(self, image_batch, real_mask_batch, weight_map_batch, train_g=True, train_d=True):
+        if train_d:
+            # train the discriminator
+            generated_masks = self.generator(image_batch)
+            combined_images = tf.concat([generated_masks, real_mask_batch], axis=0)
+            labels = tf.concat([tf.ones(image_batch.shape[0], 1), tf.zeros(real_mask_batch.shape[0], 1)],
+                               axis=0)
+            # ?: what's this
+            # https://www.tensorflow.org/guide/keras/writing_a_training_loop_from_scratch#end-to-end_example_a_gan_training_loop_from_scratch
+            labels += 0.05 * tf.random.uniform(labels.shape)
+
+            with tf.GradientTape() as tape:
+                predictions = self.discriminator(combined_images)
+                d_loss = self.loss_fn_adversarial(labels, predictions)
+            grads = tape.gradient(d_loss, self.discriminator.trainable_weights)
+            self.d_optimizer.apply_gradients(zip(grads, self.discriminator.trainable_weights))
+            self.disc_loss_tracker.update_state(d_loss)
+        else:
+            d_loss = None
+            generated_masks = None
+
+        if train_g:
+            # train the generator
+            misleading_labels = tf.zeros((image_batch.shape[0], 1))
+            with tf.GradientTape() as tape:
+                predicted_masks = self.generator(image_batch)
+                predictions = self.discriminator(predicted_masks)
+                # loss_seg = self.loss_fn_segmentation(image_batch, predicted_masks, weight_map_batch)
+                loss_ad = self.loss_fn_adversarial(misleading_labels, predictions)
+                # g_loss = loss_seg + self.lamda * loss_ad
+                g_loss = loss_ad
+            grads = tape.gradient(g_loss, self.generator.trainable_weights)
+            self.g_optimizer.apply_gradients(zip(grads, self.generator.trainable_weights))
+
+            self.gen_loss_tracker.update_state(g_loss)
+        else:
+            g_loss = None
+
+        return d_loss, g_loss, generated_masks
 
 
 if __name__ == '__main__':
@@ -116,3 +216,5 @@ if __name__ == '__main__':
     weight_map_dir = "../../Dataset/DIC_Set/DIC_Set1_Weights"
     weight_map_type = "npy"
     dataset = "DIC"
+
+    discriminator = get_discriminator((512, 512, 1))

@@ -383,7 +383,7 @@ def _binarize_mask(pred_mask):
     return np.array(pred_mask > threshold, dtype=np.uint8)
 
 
-def postprocess_mask(pred_mask, square_size=5, min_size=5, crop=False):
+def postprocess_a_mask(pred_mask, square_size=5, min_size=5, crop=False):
     """
     Receive HxW float 32 np.ndarray with value range in [0, 1.0]
     Return HxW np.uint8 np.ndarray with value range in [0, 255]
@@ -400,6 +400,15 @@ def postprocess_mask(pred_mask, square_size=5, min_size=5, crop=False):
     if min_size is not None:
         binary_mask = morph.remove_small_objects(binary_mask, min_size=min_size)
     return binary_mask.astype(np.uint8)
+
+
+def postprocess_a_mask_batch(pred_mask_batch, square_size=5, min_size=5, crop=False):
+    binary_mask_list = []
+    for i in range(pred_mask_batch.shape[0]):
+        mask_i = pred_mask_batch[i, ...].numpy().squeeze()
+        mask_i = postprocess_a_mask(mask_i, square_size, min_size, crop)
+        binary_mask_list.append(np.expand_dims(mask_i, axis=-1))
+    return tf.stack(binary_mask_list, axis=0)
 
 
 if __name__ == '__main__':
@@ -457,7 +466,7 @@ if __name__ == '__main__':
         pred_mask = pred_mask.numpy().squeeze()
         axes[1].imshow(pred_mask, cmap="gray", vmin=0, vmax=1)
         axes[1].set_title("Predicted Mask")
-        processed_mask = postprocess_mask(pred_mask)
+        processed_mask = postprocess_a_mask(pred_mask)
         axes[2].imshow(processed_mask, cmap="gray", vmin=0, vmax=1)
         axes[2].set_title("Postprocessed Mask")
         f.show()
