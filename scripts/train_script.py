@@ -100,6 +100,7 @@ def script_train_gan():
     dataset = "DIC"
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
+    # todo: load fine-tuned weights
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
     start_epoch = 0
     end_epoch = 30
@@ -129,6 +130,7 @@ def script_train_gan():
                                   pretrained_weights=pretrained_g_weight_path)
     discriminator = get_discriminator(input_size=(*target_size, 1))
     gan = GAN(discriminator=discriminator, generator=generator)
+    # todo: smaller learning rate
     gan.compile(tf.keras.optimizers.Adam(learning_rate=0.0003), tf.keras.optimizers.Adam(learning_rate=0.0003),
                 loss_fn_adversarial=tf.keras.losses.MeanSquaredError(),
                 loss_fn_segmentation=tf.keras.losses.BinaryCrossentropy(),
