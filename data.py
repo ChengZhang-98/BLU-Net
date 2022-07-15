@@ -380,13 +380,13 @@ def get_minimum_image_size(image_dir, image_type):
 
 def _binarize_mask(pred_mask):
     threshold = (np.amin(pred_mask) + np.amax(pred_mask)) / 2
-    return np.array(pred_mask > threshold, dtype=np.uint8)
+    return np.array(pred_mask > threshold, dtype=bool)
 
 
 def postprocess_a_mask(pred_mask, square_size=5, min_size=5, crop=False):
     """
     Receive HxW float 32 np.ndarray with value range in [0, 1.0]
-    Return HxW np.uint8 np.ndarray with value range in [0, 255]
+    Return HxW float32 np.ndarray with value range in [0, 1.0]
     :param pred_mask:
     :param square_size:
     :param min_size:
@@ -399,7 +399,7 @@ def postprocess_a_mask(pred_mask, square_size=5, min_size=5, crop=False):
         binary_mask = morph.binary_opening(binary_mask, footprint=footprint)
     if min_size is not None:
         binary_mask = morph.remove_small_objects(binary_mask, min_size=min_size)
-    return binary_mask.astype(np.uint8)
+    return binary_mask.astype(np.float32)
 
 
 def postprocess_a_mask_batch(pred_mask_batch, square_size=5, min_size=5, crop=False):
@@ -422,9 +422,9 @@ if __name__ == '__main__':
 
     target_size = (256, 256)
 
-    bool_calculate_and_save_weight_maps = False
-    bool_data_generator_test = False
-    bool_test_postprocessing = True
+    bool_calculate_and_save_weight_maps = True
+    bool_data_generator_test = True
+    bool_test_postprocessing = False
 
     # Data preprocessing
     # calculate and save weight map files
@@ -437,14 +437,7 @@ if __name__ == '__main__':
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
                                    target_size=target_size, data_aug_transform=None, seed=None)
-
-        data_gen_2 = DataGenerator.build_from_dataframe(data_gen_1.data_df.iloc[-5:, :], batch_size=2, mode="validate",
-                                                        target_size=target_size,
-                                                        data_aug_transform=None, seed=None)
-        data_gen_1.data_df = data_gen_1.data_df.iloc[:-5, :]
-
-        image_batch, mask_batch, weight_map_batch = data_gen_1[0]
-        print(image_batch.shape, mask_batch.shape, weight_map_batch.shape)
+        print(len(data_gen_1.data_df))
 
     if bool_test_postprocessing:
         from model import get_uncompiled_unet

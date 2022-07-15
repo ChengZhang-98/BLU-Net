@@ -35,7 +35,7 @@ def script_train_unet(name=None):
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
     start_epoch = 0
-    end_epoch = 10
+    end_epoch = 15
 
     # logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     if name is None:
@@ -45,7 +45,8 @@ def script_train_unet(name=None):
 
     unet = get_compiled_unet(input_size=(*target_size, 1),
                              levels=5,
-                             pretrained_weights=pretrained_weight_path)
+                             pretrained_weights=pretrained_weight_path,
+                             learning_rate=1e-4)
 
     data_augmentation_transform = DataAugmentation([HistogramVoodoo(),
                                                     ElasticDeform(sigma=20),
@@ -76,11 +77,14 @@ def script_train_unet(name=None):
 
     callback_list = [tensorboard_callback, model_checkpoint_callback, early_stopping_callback, validation_plot_callback]
 
+    print("training set contains {} samples, validation set contains {} samples".format(len(data_gen_train.data_df),
+                                                                                        len(data_gen_val.data_df)))
     print("training starts...")
     history = unet.fit(x=data_gen_train, epochs=end_epoch, initial_epoch=start_epoch,
                        validation_data=data_gen_val, shuffle=False,
                        validation_freq=1, callbacks=callback_list,
                        workers=1, use_multiprocessing=False)
+    return history
 
 
 def script_train_gan():
@@ -142,5 +146,5 @@ def script_train_gan():
 
 
 if __name__ == '__main__':
-    # script_train_unet()
-    script_train_gan()
+    history_unet = script_train_unet(name="afternoon")
+    # script_train_gan()

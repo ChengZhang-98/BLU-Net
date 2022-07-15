@@ -87,11 +87,11 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
     return unet_model
 
 
-def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained_weights=None):
+def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4):
     unet_model = get_uncompiled_unet(input_size, final_activation=final_activation, output_classes=1, dropout=0,
                                      levels=levels)
     bce_loss_from_logits = final_activation != "sigmoid"
-    unet_model.compile(optimizer=Adam(learning_rate=1e-4),
+    unet_model.compile(optimizer=Adam(learning_rate=learning_rate),
                        loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),
                        metrics=[BinaryAccuracy(name="binary_accuracy", threshold=0.5),
                                 BinaryIoU(target_class_ids=[1], threshold=0.5, name="binary_IoU", )])

@@ -52,7 +52,8 @@ def get_validation_plot_callback(model, validation_set, batch_index_to_plot, sum
                 image_batch_i, _ = validation_set[index]
                 predicted_mask_batch_i = model(image_batch_i, training=False)
                 # todo: this modified function has not been tested
-                predicted_mask_batch_i = postprocess_a_mask_batch(predicted_mask_batch_i)
+                # predicted_mask_batch_i = postprocess_a_mask_batch(predicted_mask_batch_i, min_size=5)
+                predicted_mask_batch_i = tf.cast(predicted_mask_batch_i > 0.5, dtype=tf.float32)
                 predicted_mask_list.append(predicted_mask_batch_i)
                 image_path_series_i = validation_set.get_batch_dataframe(index).loc[:, "image"]
                 image_path_series_list.append(image_path_series_i)
