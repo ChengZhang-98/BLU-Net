@@ -114,6 +114,12 @@ def _get_conv_block(x, filters, activation,
 
 
 def get_discriminator(input_size, dropout=0.2):
+    """
+    Refer to https://keras.io/examples/generative/wgan_gp/
+    :param input_size:
+    :param dropout:
+    :return:
+    """
     inputs = Input(input_size)
 
     x = _get_conv_block(inputs, 64, kernel_size=(5, 5), strides=(2, 2),
@@ -127,6 +133,11 @@ def get_discriminator(input_size, dropout=0.2):
                         use_dropout=True, drop_value=0.3)
     x = _get_conv_block(x, 512, kernel_size=(5, 5),
                         strides=(2, 2), use_bn=False, activation=LeakyReLU(0.2),
+                        use_bias=True, use_dropout=True, drop_value=0.3)
+
+    # *: one more conv_block than https://keras.io/examples/generative/wgan_gp/
+    x = _get_conv_block(x, 1024, kernel_size=(5, 5),
+                        strides=(2, 2), use_bn=False, activation=LeakyReLU(0.2),
                         use_bias=True, use_dropout=False, drop_value=0.3)
 
     x = Flatten()(x)
@@ -137,6 +148,7 @@ def get_discriminator(input_size, dropout=0.2):
 
 
 class GAN:
+    # https://www.tensorflow.org/tutorials/generative/pix2pix
     def __init__(self, discriminator, generator):
         self.discriminator = discriminator
         self.generator = generator
@@ -153,6 +165,7 @@ class GAN:
         self.disc_loss_tracker.reset_state()
         self.gen_loss_tracker.reset_state()
         self.metric_binary_accuracy.reset_state()
+        self.metric_binary_IoU.reset_state()
 
     def compile(self, d_optimizer, g_optimizer, loss_fn_adversarial, loss_fn_segmentation, lamda=1.0):
         self.d_optimizer = d_optimizer
@@ -165,10 +178,13 @@ class GAN:
         if train_d:
             # train the discriminator
             generated_masks = self.generator(image_batch)
-            combined_images = tf.concat([generated_masks, real_mask_batch], axis=0)
+            couple_generated = tf.concat([image_batch, generated_masks], axis=-1)
+            couple_real = tf.concat([image_batch, real_mask_batch], axis=-1)
+            combined_images = tf.concat([couple_generated, couple_real], axis=0)
+            # *: Note that 1 for generated couple, and 0 for real couple
             labels = tf.concat([tf.ones(image_batch.shape[0], 1), tf.zeros(real_mask_batch.shape[0], 1)],
                                axis=0)
-            # ?: what's this
+            # ?: what's this. Tensorflow tutorial notes this is an important trick
             # https://www.tensorflow.org/guide/keras/writing_a_training_loop_from_scratch#end-to-end_example_a_gan_training_loop_from_scratch
             labels += 0.05 * tf.random.uniform(labels.shape)
 
@@ -184,10 +200,12 @@ class GAN:
 
         if train_g:
             # train the generator
+            # here generator tries to fool the discriminator
             misleading_labels = tf.zeros((image_batch.shape[0], 1))
             with tf.GradientTape() as tape:
                 predicted_masks = self.generator(image_batch)
-                predictions = self.discriminator(predicted_masks)
+                couple_generated = tf.concat([image_batch, predicted_masks], axis=-1)
+                predictions = self.discriminator(couple_generated)
                 # loss_seg = self.loss_fn_segmentation(image_batch, predicted_masks, weight_map_batch)
                 loss_ad = self.loss_fn_adversarial(misleading_labels, predictions)
                 # g_loss = loss_seg + self.lamda * loss_ad
