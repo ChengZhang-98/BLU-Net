@@ -148,6 +148,7 @@ def get_discriminator(input_size, dropout=0.2):
 
 
 class GAN:
+    # todo: Checkpoint & refer to the design in pix2pix
     # https://www.tensorflow.org/tutorials/generative/pix2pix
     def __init__(self, discriminator, generator):
         self.discriminator = discriminator

@@ -104,7 +104,6 @@ def script_train_gan(name=None):
     dataset = "DIC"
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
-    # todo: load fine-tuned weights
     # checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/" \
     #                                "unet_agarpads_seg_evaluation2.hdf5"
     pretrained_g_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
@@ -139,7 +138,6 @@ def script_train_gan(name=None):
                                   pretrained_weights=pretrained_g_weight_path)
     discriminator = get_discriminator(input_size=(*target_size, 2))
     gan = GAN(discriminator=discriminator, generator=generator)
-    # todo: smaller learning rate
     gan.compile(d_optimizer=tf.keras.optimizers.Adam(learning_rate=5e-5, beta_1=0.5),
                 g_optimizer=tf.keras.optimizers.Adam(learning_rate=5e-5, beta_1=0.5),
                 loss_fn_adversarial=tf.keras.losses.MeanSquaredError(),
@@ -157,5 +155,5 @@ def script_train_gan(name=None):
 
 
 if __name__ == '__main__':
-    # history_unet = script_train_unet(name="evening-unet")
-    log_df_gan = script_train_gan(name="evening-gan")
+    history_unet = script_train_unet(name="evening-unet")
+    # log_df_gan = script_train_gan(name="evening-gan")

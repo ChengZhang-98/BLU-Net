@@ -383,30 +383,26 @@ def _binarize_mask(pred_mask):
     return np.array(pred_mask > threshold, dtype=bool)
 
 
-def postprocess_a_mask(pred_mask, square_size=5, min_size=5, crop=False):
+def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
     """
-    Receive HxW float 32 np.ndarray with value range in [0, 1.0]
-    Return HxW float32 np.ndarray with value range in [0, 1.0]
+    Receive HxW np.ndarray predicted mask
+    Return HxW np.ndarray post-processed mask
     :param pred_mask:
-    :param square_size:
-    :param min_size:
-    :param crop:
+    :param binarize_threshold:
+    :param remove_min_size:
     :return:
     """
-    binary_mask = _binarize_mask(pred_mask).astype(bool)
-    footprint = morph.square(square_size)
-    if not crop:
-        binary_mask = morph.binary_opening(binary_mask, footprint=footprint)
-    if min_size is not None:
-        binary_mask = morph.remove_small_objects(binary_mask, min_size=min_size)
-    return binary_mask.astype(np.float32)
+    pred_mask = (pred_mask >= binarize_threshold).astype(bool)
+    pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
+
+    return pred_mask
 
 
-def postprocess_a_mask_batch(pred_mask_batch, square_size=5, min_size=5, crop=False):
+def postprocess_a_mask_batch(pred_mask_batch, binarize_threshold=0.5, remove_min_size=20):
     binary_mask_list = []
     for i in range(pred_mask_batch.shape[0]):
         mask_i = pred_mask_batch[i, ...].numpy().squeeze()
-        mask_i = postprocess_a_mask(mask_i, square_size, min_size, crop)
+        mask_i = postprocess_a_mask(mask_i, binarize_threshold=binarize_threshold, remove_min_size=remove_min_size)
         binary_mask_list.append(np.expand_dims(mask_i, axis=-1))
     return tf.stack(binary_mask_list, axis=0)
 
@@ -422,9 +418,9 @@ if __name__ == '__main__':
 
     target_size = (256, 256)
 
-    bool_calculate_and_save_weight_maps = True
-    bool_data_generator_test = True
-    bool_test_postprocessing = False
+    bool_calculate_and_save_weight_maps = False
+    bool_data_generator_test = False
+    bool_test_postprocessing = True
 
     # Data preprocessing
     # calculate and save weight map files
@@ -439,28 +435,25 @@ if __name__ == '__main__':
                                    target_size=target_size, data_aug_transform=None, seed=None)
         print(len(data_gen_1.data_df))
 
-    if bool_test_postprocessing:
-        from model import get_uncompiled_unet
-        from data import _center_crop_np
 
-        unet = get_uncompiled_unet(input_size=(512, 512, 1), final_activation="sigmoid", output_classes=1)
-        unet.load_weights("E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5")
-        image_path = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated/img_000007_1.tif"
+    def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
+        pred_mask = (pred_mask >= binarize_threshold).astype(bool)
+        pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
+
+        return pred_mask
+
+
+    if bool_test_postprocessing:
+        image_path = "./predicted_mask.png"
         image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        image, _, _ = _center_crop_np(image, image, image, (512, 512))
-        f, axes = plt.subplots(1, 3, figsize=(12, 4), dpi=200)
-        axes[0].imshow(image, cmap="gray", vmin=0, vmax=255)
-        axes[0].set_title("original")
-        image = np.expand_dims(image, axis=(0, -1))
-        # print(image.shape)
-        image = tf.convert_to_tensor(image, dtype=tf.float32)
-        # print(image.shape)
-        pred_mask = unet(image, training=False)
-        pred_mask = pred_mask.numpy().squeeze()
-        axes[1].imshow(pred_mask, cmap="gray", vmin=0, vmax=1)
-        axes[1].set_title("Predicted Mask")
-        processed_mask = postprocess_a_mask(pred_mask)
-        axes[2].imshow(processed_mask, cmap="gray", vmin=0, vmax=1)
-        axes[2].set_title("Postprocessed Mask")
-        f.show()
+        image = image / 255
+        image_remove = postprocess_a_mask(image, binarize_threshold=0.5)
+
+        plt.imshow(image, cmap="gray", vmin=0, vmax=1)
+        plt.suptitle("original")
+        plt.show()
+
+        plt.imshow(image_remove, cmap="gray", vmin=0, vmax=1)
+        plt.suptitle("small objects removed")
+        plt.show()
     print("done")
