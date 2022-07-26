@@ -14,7 +14,6 @@ from keras.losses import BinaryCrossentropy
 from keras.metrics import BinaryAccuracy, BinaryIoU
 from keras.models import Model
 from keras.optimizers import Adam
-import tensorflow_addons as tfa
 from tqdm import tqdm
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
