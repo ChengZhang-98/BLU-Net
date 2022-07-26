@@ -71,11 +71,12 @@ def get_validation_plot_callback(model, validation_set, batch_index_list_to_plot
     return validation_plot_callback
 
 
-def train_val_split(data_gen: DataGenerator, train_ratio: float, validation_batch_size=2):
+def train_val_split(data_gen: DataGenerator, train_ratio: float, validation_batch_size=2, use_weight_map_val=False):
     sample_for_train = int(train_ratio * len(data_gen.data_df))
     data_gen_val = DataGenerator.build_from_dataframe(data_gen.data_df.iloc[sample_for_train:, :],
                                                       batch_size=validation_batch_size,
                                                       mode="validate",
+                                                      use_weight_map=use_weight_map_val,
                                                       target_size=data_gen.target_size,
                                                       data_aug_transform=None,
                                                       seed=None)
@@ -93,7 +94,7 @@ def get_lr_scheduler(start_epoch=1):
     return lr_scheduler
 
 
-def train_gan(gan: GAN, epochs, training_set, validation_set, tf_summary_writer_val_image=None,
+def train_gan(gan: GAN, start_epoch, epochs, training_set, validation_set, tf_summary_writer_val_image=None,
               tf_summary_writer_train_scaler=None, tf_summary_writer_val_scaler=None, epochs_not_train_g=3):
     print("Train discriminator but not generator in the first {} epochs".format(epochs_not_train_g))
 
@@ -105,12 +106,12 @@ def train_gan(gan: GAN, epochs, training_set, validation_set, tf_summary_writer_
 
     log_df = pd.DataFrame(dict(epoch=[], train_g_loss=[], train_d_loss=[], val_binary_accuracy=[], val_binary_iou=[]))
 
-    for epoch in range(epochs):
+    for epoch in np.range(start_epoch, start_epoch + epochs):
         epoch_log_dict = dict(epoch=[epoch], train_g_loss=[np.NAN], train_d_loss=[np.NAN],
                               val_binary_accuracy=[np.NAN], val_binary_iou=[np.NAN])
 
         # *: train
-        train_g = epoch >= epochs_not_train_g
+        train_g = epoch - start_epoch >= epochs_not_train_g
         train_d = True
         for step, (image_batch_train, mask_batch_train, weight_map_batch_train) in tqdm(enumerate(training_set),
                                                                                         desc="Epoch {}".format(epoch)):
@@ -223,7 +224,7 @@ if __name__ == '__main__':
                              levels=5,
                              pretrained_weights=pretrained_weight_path,
                              learning_rate=1e-4)
-    data_gen_train = DataGenerator(batch_size=batch_size, dataset=dataset, mode="train",
+    data_gen_train = DataGenerator(batch_size=batch_size, dataset=dataset, mode="train", use_weight_map=True,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,

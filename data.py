@@ -132,7 +132,7 @@ def _resize_with_pad_or_center_crop_and_rescale(image, mask, weight_map, target_
 
 
 class DataGenerator(Sequence):
-    def __init__(self, batch_size, dataset, mode,
+    def __init__(self, batch_size, dataset, mode, use_weight_map,
                  image_dir,
                  image_type,
                  mask_dir,
@@ -145,6 +145,7 @@ class DataGenerator(Sequence):
         super(DataGenerator, self).__init__()
         self.batch_size = batch_size
         self.mode = mode
+        self.use_weight_map = use_weight_map
         self.target_size = target_size
         self.data_aug_transform = data_aug_transform
         self.seed = seed
@@ -162,8 +163,8 @@ class DataGenerator(Sequence):
                 self.data_df = self.data_df.sample(frac=1, random_state=self.seed, ignore_index=True)
 
     @classmethod
-    def build_from_dataframe(cls, dataframe, batch_size, mode, target_size, data_aug_transform, seed):
-        data_gen = cls(batch_size, dataset=None, mode=mode,
+    def build_from_dataframe(cls, dataframe, batch_size, mode, use_weight_map, target_size, data_aug_transform, seed):
+        data_gen = cls(batch_size, dataset=None, mode=mode, use_weight_map=use_weight_map,
                        image_dir=None, image_type=None,
                        mask_dir=None, mask_type=None,
                        weight_map_dir=None, weight_map_type=None,
@@ -186,7 +187,7 @@ class DataGenerator(Sequence):
                  image_batch: BxHxWx1 tf.float32 tensor
                  mask_match: BxHxWx1 tf.float32 tensor
         """
-        batch_df = self.data_df.iloc[self.batch_size * index:self.batch_size * (index + 1), :]
+        batch_df = self.data_df.iloc[self.batch_size * index: self.batch_size * (index + 1), :]
         image_batch = []
         mask_batch = []
         weight_map_batch = []
@@ -197,10 +198,16 @@ class DataGenerator(Sequence):
             # load the corresponding mask and weight map
             if self.mode == "train":
                 mask_i = _load_an_image_np(row.mask)
-                weight_map_i = np.load(row.weight_map)
+                if self.use_weight_map:
+                    weight_map_i = np.load(row.weight_map)
+                else:
+                    weight_map_i = np.ones_like(image_i)
             else:
                 mask_i = _load_an_image_np(row.mask)
-                weight_map_i = None
+                if self.use_weight_map:
+                    weight_map_i = np.load(row.weight_map)
+                else:
+                    weight_map_i = None
 
             # data preprocessing
             if self.mode == "train":
@@ -232,7 +239,11 @@ class DataGenerator(Sequence):
             return image_batch, mask_batch, weight_map_batch
         elif self.mode == "validate":
             mask_batch = tf.stack(mask_batch, axis=0)
-            return image_batch, mask_batch
+            if self.use_weight_map:
+                weight_map_batch = tf.stack(weight_map_batch, axis=0)
+                return image_batch, mask_batch, weight_map_batch
+            else:
+                return image_batch, mask_batch
         else:
             return image_batch, mask_batch
 
@@ -419,8 +430,8 @@ if __name__ == '__main__':
     target_size = (256, 256)
 
     bool_calculate_and_save_weight_maps = False
-    bool_data_generator_test = False
-    bool_test_postprocessing = True
+    bool_data_generator_test = True
+    bool_test_postprocessing = False
 
     # Data preprocessing
     # calculate and save weight map files
@@ -428,12 +439,23 @@ if __name__ == '__main__':
         calculate_and_save_weight_maps(mask_dir=mask_dir, weight_map_dir=weight_map_dir, sample_size=None)
 
     if bool_data_generator_test:
-        data_gen_1 = DataGenerator(batch_size=4, dataset=dataset, mode="train",
+        data_gen_1 = DataGenerator(batch_size=1, dataset=dataset, mode="train", use_weight_map=True,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
                                    target_size=target_size, data_aug_transform=None, seed=None)
-        print(len(data_gen_1.data_df))
+
+        for i in range(5):
+            index = np.random.randint(0, len(data_gen_1.data_df))
+            image, mask, weight_map = data_gen_1[index]
+            image = image.numpy().squeeze()
+            mask = mask.numpy().squeeze()
+            weight_map = weight_map.numpy().squeeze()
+            f, ax = plt.subplots(1, 3)
+            ax[0].imshow(image, cmap="gray", vmin=0, vmax=1)
+            ax[1].imshow(mask, cmap="gray", vmin=0, vmax=1)
+            ax[2].imshow(weight_map)
+            f.show()
 
 
     def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
