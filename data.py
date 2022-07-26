@@ -132,7 +132,7 @@ def _resize_with_pad_or_center_crop_and_rescale(image, mask, weight_map, target_
 
 
 class DataGenerator(Sequence):
-    def __init__(self, batch_size, dataset, mode,
+    def __init__(self, batch_size, dataset, mode, use_weight_map,
                  image_dir,
                  image_type,
                  mask_dir,
@@ -145,12 +145,14 @@ class DataGenerator(Sequence):
         super(DataGenerator, self).__init__()
         self.batch_size = batch_size
         self.mode = mode
+        self.use_weight_map = use_weight_map
         self.target_size = target_size
         self.data_aug_transform = data_aug_transform
         self.seed = seed
 
         assert mode.lower() in ["train", "validate",
-                                "test"], "Unsupported mode: {}. mode should be 'train'/'validate'/'test'".format(mode)
+                                "test", "inference"], \
+            "Unsupported mode: {}. mode should be 'train'/'validate'/'test'/'inference'".format(mode)
 
         if image_dir:
             self.data_df = _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_dir,
@@ -162,8 +164,8 @@ class DataGenerator(Sequence):
                 self.data_df = self.data_df.sample(frac=1, random_state=self.seed, ignore_index=True)
 
     @classmethod
-    def build_from_dataframe(cls, dataframe, batch_size, mode, target_size, data_aug_transform, seed):
-        data_gen = cls(batch_size, dataset=None, mode=mode,
+    def build_from_dataframe(cls, dataframe, batch_size, mode, use_weight_map, target_size, data_aug_transform, seed):
+        data_gen = cls(batch_size, dataset=None, mode=mode, use_weight_map=use_weight_map,
                        image_dir=None, image_type=None,
                        mask_dir=None, mask_type=None,
                        weight_map_dir=None, weight_map_type=None,
@@ -186,7 +188,7 @@ class DataGenerator(Sequence):
                  image_batch: BxHxWx1 tf.float32 tensor
                  mask_match: BxHxWx1 tf.float32 tensor
         """
-        batch_df = self.data_df.iloc[self.batch_size * index:self.batch_size * (index + 1), :]
+        batch_df = self.data_df.iloc[self.batch_size * index: self.batch_size * (index + 1), :]
         image_batch = []
         mask_batch = []
         weight_map_batch = []
@@ -195,11 +197,14 @@ class DataGenerator(Sequence):
             # load an image
             image_i = _load_an_image_np(row.image)
             # load the corresponding mask and weight map
-            if self.mode == "train":
+            if self.mode != "inference":
                 mask_i = _load_an_image_np(row.mask)
-                weight_map_i = np.load(row.weight_map)
+                if self.use_weight_map:
+                    weight_map_i = np.load(row.weight_map)
+                else:
+                    weight_map_i = None
             else:
-                mask_i = _load_an_image_np(row.mask)
+                mask_i = None
                 weight_map_i = None
 
             # data preprocessing
@@ -226,15 +231,15 @@ class DataGenerator(Sequence):
 
         image_batch = tf.stack(image_batch, axis=0)
 
-        if self.mode == "train":
+        if self.mode != "reference":
             mask_batch = tf.stack(mask_batch, axis=0)
-            weight_map_batch = tf.stack(weight_map_batch, axis=0)
-            return image_batch, mask_batch, weight_map_batch
-        elif self.mode == "validate":
-            mask_batch = tf.stack(mask_batch, axis=0)
-            return image_batch, mask_batch
+            if self.use_weight_map:
+                weight_map_batch = tf.stack(weight_map_batch, axis=0)
+                return image_batch, mask_batch, weight_map_batch
+            else:
+                return image_batch, mask_batch
         else:
-            return image_batch, mask_batch
+            return image_batch
 
     def __len__(self):
         return int(len(self.data_df) / self.batch_size)
@@ -383,30 +388,26 @@ def _binarize_mask(pred_mask):
     return np.array(pred_mask > threshold, dtype=bool)
 
 
-def postprocess_a_mask(pred_mask, square_size=5, min_size=5, crop=False):
+def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
     """
-    Receive HxW float 32 np.ndarray with value range in [0, 1.0]
-    Return HxW float32 np.ndarray with value range in [0, 1.0]
+    Receive HxW np.ndarray predicted mask
+    Return HxW np.ndarray post-processed mask
     :param pred_mask:
-    :param square_size:
-    :param min_size:
-    :param crop:
+    :param binarize_threshold:
+    :param remove_min_size:
     :return:
     """
-    binary_mask = _binarize_mask(pred_mask).astype(bool)
-    footprint = morph.square(square_size)
-    if not crop:
-        binary_mask = morph.binary_opening(binary_mask, footprint=footprint)
-    if min_size is not None:
-        binary_mask = morph.remove_small_objects(binary_mask, min_size=min_size)
-    return binary_mask.astype(np.float32)
+    pred_mask = (pred_mask >= binarize_threshold).astype(bool)
+    pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
+
+    return pred_mask
 
 
-def postprocess_a_mask_batch(pred_mask_batch, square_size=5, min_size=5, crop=False):
+def postprocess_a_mask_batch(pred_mask_batch, binarize_threshold=0.5, remove_min_size=20):
     binary_mask_list = []
     for i in range(pred_mask_batch.shape[0]):
         mask_i = pred_mask_batch[i, ...].numpy().squeeze()
-        mask_i = postprocess_a_mask(mask_i, square_size, min_size, crop)
+        mask_i = postprocess_a_mask(mask_i, binarize_threshold=binarize_threshold, remove_min_size=remove_min_size)
         binary_mask_list.append(np.expand_dims(mask_i, axis=-1))
     return tf.stack(binary_mask_list, axis=0)
 
@@ -422,7 +423,7 @@ if __name__ == '__main__':
 
     target_size = (256, 256)
 
-    bool_calculate_and_save_weight_maps = True
+    bool_calculate_and_save_weight_maps = False
     bool_data_generator_test = True
     bool_test_postprocessing = False
 
@@ -432,35 +433,43 @@ if __name__ == '__main__':
         calculate_and_save_weight_maps(mask_dir=mask_dir, weight_map_dir=weight_map_dir, sample_size=None)
 
     if bool_data_generator_test:
-        data_gen_1 = DataGenerator(batch_size=4, dataset=dataset, mode="train",
+        data_gen_1 = DataGenerator(batch_size=1, dataset=dataset, mode="train", use_weight_map=True,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
                                    target_size=target_size, data_aug_transform=None, seed=None)
-        print(len(data_gen_1.data_df))
+
+        for i in range(5):
+            index = np.random.randint(0, len(data_gen_1.data_df))
+            image, mask, weight_map = data_gen_1[index]
+            image = image.numpy().squeeze()
+            mask = mask.numpy().squeeze()
+            weight_map = weight_map.numpy().squeeze()
+            f, ax = plt.subplots(1, 3)
+            ax[0].imshow(image, cmap="gray", vmin=0, vmax=1)
+            ax[1].imshow(mask, cmap="gray", vmin=0, vmax=1)
+            ax[2].imshow(weight_map)
+            f.show()
+
+
+    def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
+        pred_mask = (pred_mask >= binarize_threshold).astype(bool)
+        pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
+
+        return pred_mask
+
 
     if bool_test_postprocessing:
-        from model import get_uncompiled_unet
-        from data import _center_crop_np
-
-        unet = get_uncompiled_unet(input_size=(512, 512, 1), final_activation="sigmoid", output_classes=1)
-        unet.load_weights("E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5")
-        image_path = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated/img_000007_1.tif"
+        image_path = "./predicted_mask.png"
         image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        image, _, _ = _center_crop_np(image, image, image, (512, 512))
-        f, axes = plt.subplots(1, 3, figsize=(12, 4), dpi=200)
-        axes[0].imshow(image, cmap="gray", vmin=0, vmax=255)
-        axes[0].set_title("original")
-        image = np.expand_dims(image, axis=(0, -1))
-        # print(image.shape)
-        image = tf.convert_to_tensor(image, dtype=tf.float32)
-        # print(image.shape)
-        pred_mask = unet(image, training=False)
-        pred_mask = pred_mask.numpy().squeeze()
-        axes[1].imshow(pred_mask, cmap="gray", vmin=0, vmax=1)
-        axes[1].set_title("Predicted Mask")
-        processed_mask = postprocess_a_mask(pred_mask)
-        axes[2].imshow(processed_mask, cmap="gray", vmin=0, vmax=1)
-        axes[2].set_title("Postprocessed Mask")
-        f.show()
+        image = image / 255
+        image_remove = postprocess_a_mask(image, binarize_threshold=0.5)
+
+        plt.imshow(image, cmap="gray", vmin=0, vmax=1)
+        plt.suptitle("original")
+        plt.show()
+
+        plt.imshow(image_remove, cmap="gray", vmin=0, vmax=1)
+        plt.suptitle("small objects removed")
+        plt.show()
     print("done")

@@ -94,7 +94,7 @@ def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained
     unet_model.compile(optimizer=Adam(learning_rate=learning_rate),
                        loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),
                        metrics=[BinaryAccuracy(name="binary_accuracy", threshold=0.5),
-                                BinaryIoU(target_class_ids=[1], threshold=0.5, name="binary_IoU", )])
+                                BinaryIoU(name="binary_IoU", target_class_ids=[1], threshold=0.5)])
     if pretrained_weights is not None:
         unet_model.load_weights(filepath=pretrained_weights)
 
@@ -174,7 +174,7 @@ class GAN:
         self.loss_fn_segmentation = loss_fn_segmentation
         self.lamda = lamda
 
-    def train_step(self, image_batch, real_mask_batch, weight_map_batch, train_g=True, train_d=True):
+    def train_step(self, image_batch, real_mask_batch, train_g=True, train_d=True):
         if train_d:
             # train the discriminator
             generated_masks = self.generator(image_batch)

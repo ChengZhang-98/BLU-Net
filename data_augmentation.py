@@ -38,12 +38,17 @@ def histogram_voodoo(image, mask, weight_map, num_control_points=3):
 
 
 def elasticdeform_np(image, mask, weight_map, sigma=10, points=3, mode="mirror", **kwargs):
-    matrix_to_deform = [image, mask, weight_map]
-
-    new_image, new_mask, new_weight_map = elasticdeform.deform_random_grid(matrix_to_deform, sigma=sigma,
-                                                                           points=points, order=0,
-                                                                           mode=mode, axis=(0, 1),
-                                                                           prefilter=False, **kwargs)
+    if weight_map is None:
+        new_weight_map = None
+        new_image, new_mask = elasticdeform.deform_random_grid([image, mask], sigma=sigma,
+                                                               points=points, order=0,
+                                                               mode=mode, axis=(0, 1),
+                                                               prefilter=False, **kwargs)
+    else:
+        new_image, new_mask, new_weight_map = elasticdeform.deform_random_grid([image, mask, weight_map], sigma=sigma,
+                                                                               points=points, order=0,
+                                                                               mode=mode, axis=(0, 1),
+                                                                               prefilter=False, **kwargs)
     return new_image, new_mask, new_weight_map
 
 
@@ -62,11 +67,13 @@ def random_flip_np(image, mask, weight_map):
     if np.random.randint(0, 2):
         image = np.fliplr(image)
         mask = np.fliplr(mask)
-        weight_map = np.fliplr(weight_map)
+        if weight_map is not None:
+            weight_map = np.fliplr(weight_map)
     if np.random.randint(0, 2):
         image = np.flipud(image)
         mask = np.flipud(mask)
-        weight_map = np.flipud(weight_map)
+        if weight_map is not None:
+            weight_map = np.flipud(weight_map)
     return image, mask, weight_map
 
 
@@ -75,7 +82,10 @@ def random_rotate_np(image, mask, weight_map, max_angle=0.1, fill_mode="reflect"
     angle = np.random.uniform(-max_angle, max_angle)
     new_image = transform.rotate(image, angle, mode=fill_mode, order=interpolation_order)
     new_mask = transform.rotate(mask, angle, mode=fill_mode, order=interpolation_order)
-    new_weight_map = transform.rotate(weight_map, angle, mode=fill_mode, order=interpolation_order)
+    if weight_map is not None:
+        new_weight_map = transform.rotate(weight_map, angle, mode=fill_mode, order=interpolation_order)
+    else:
+        new_weight_map = None
     return new_image, new_mask, new_weight_map
 
 
@@ -83,7 +93,10 @@ def random_rot90(image, mask, weight_map):
     k = np.random.randint(0, 4)
     new_image = np.rot90(image, k=k)
     new_mask = np.rot90(mask, k=k)
-    new_weight_map = np.rot90(weight_map, k=k)
+    if weight_map is not None:
+        new_weight_map = np.rot90(weight_map, k=k)
+    else:
+        new_weight_map = None
     return new_image, new_mask, new_weight_map
 
 
@@ -115,7 +128,10 @@ def random_zoom_and_shift_np(image, mask, weight_map, zoom_beta=0.05, shift_x_ma
 
     new_image = _zoom_and_shift(image, zoom_level=zoom + 1, shift_x=shift_x, shift_y=shift_y)
     new_mask = _zoom_and_shift(mask, zoom_level=zoom + 1, shift_x=shift_x, shift_y=shift_y)
-    new_weight_map = _zoom_and_shift(weight_map, zoom_level=zoom + 1, shift_x=shift_x, shift_y=shift_y)
+    if weight_map is not None:
+        new_weight_map = _zoom_and_shift(weight_map, zoom_level=zoom + 1, shift_x=shift_x, shift_y=shift_y)
+    else:
+        new_weight_map = None
 
     return new_image, new_mask, new_weight_map
 
