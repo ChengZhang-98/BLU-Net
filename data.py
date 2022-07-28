@@ -131,8 +131,20 @@ def _resize_with_pad_or_center_crop_and_rescale(image, mask, weight_map, target_
     return new_image / 255.0, new_mask / 255.0, new_weight_map
 
 
+def _reduce_size_before_resize(image, mask, weight_map, target_size):
+    if image.shape[0] > 1.5 * target_size[0] or image.shape[1] > 1.5 * target_size[1]:
+        # *: note that opencv2.resize requires parameter `dim` in w x h instead of h x w
+        target_dim = (int(target_size[1] * 1.5), int(target_size[0] * 1.5))
+        image = cv2.resize(image, target_dim, interpolation=cv2.INTER_LINEAR)
+        if mask is not None:
+            mask = cv2.resize(mask, target_dim, interpolation=cv2.INTER_LINEAR)
+        if weight_map is not None:
+            weight_map = cv2.resize(weight_map, target_dim, interpolation=cv2.INTER_LINEAR)
+    return image, mask, weight_map
+
+
 class DataGenerator(Sequence):
-    def __init__(self, batch_size, dataset, mode, use_weight_map,
+    def __init__(self, batch_size, dataset_name, mode, use_weight_map,
                  image_dir,
                  image_type,
                  mask_dir,
@@ -144,7 +156,8 @@ class DataGenerator(Sequence):
                  seed):
         super(DataGenerator, self).__init__()
         self.batch_size = batch_size
-        self.mode = mode
+        self.dataset_name = dataset_name
+        self.mode = mode.lower()
         self.use_weight_map = use_weight_map
         self.target_size = target_size
         self.data_aug_transform = data_aug_transform
@@ -156,7 +169,7 @@ class DataGenerator(Sequence):
 
         if image_dir:
             self.data_df = _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_dir,
-                                                weight_map_type, dataset)
+                                                weight_map_type, dataset_name)
             if self.seed is None:
                 self.seed_gen = itertools.count(start=0, step=1)
             else:
@@ -165,7 +178,7 @@ class DataGenerator(Sequence):
 
     @classmethod
     def build_from_dataframe(cls, dataframe, batch_size, mode, use_weight_map, target_size, data_aug_transform, seed):
-        data_gen = cls(batch_size, dataset=None, mode=mode, use_weight_map=use_weight_map,
+        data_gen = cls(batch_size, dataset_name=None, mode=mode, use_weight_map=use_weight_map,
                        image_dir=None, image_type=None,
                        mask_dir=None, mask_type=None,
                        weight_map_dir=None, weight_map_type=None,
@@ -200,7 +213,10 @@ class DataGenerator(Sequence):
             if self.mode != "inference":
                 mask_i = _load_an_image_np(row.mask)
                 if self.use_weight_map:
-                    weight_map_i = np.load(row.weight_map)
+                    if self.dataset_name == "training_2d":
+                        weight_map_i = _load_an_image_np(row.weight_map)
+                    else:
+                        weight_map_i = np.load(row.weight_map)
                 else:
                     weight_map_i = None
             else:
@@ -208,6 +224,11 @@ class DataGenerator(Sequence):
                 weight_map_i = None
 
             # data preprocessing
+            # *: the image size in training_2d differs across a large range from ~400 to 2048
+            # *: therefore it's necessary to reduce the size
+            if self.dataset_name == "training_2d":
+                image_i, mask_i, weight_map_i = _reduce_size_before_resize(image_i, mask_i, weight_map_i,
+                                                                           target_size)
             if self.mode == "train":
                 image_i, mask_i, weight_map_i = \
                     _resize_with_pad_or_random_crop_and_rescale(image=image_i, mask=mask_i, weight_map=weight_map_i,
@@ -231,7 +252,7 @@ class DataGenerator(Sequence):
 
         image_batch = tf.stack(image_batch, axis=0)
 
-        if self.mode != "reference":
+        if self.mode != "inference":
             mask_batch = tf.stack(mask_batch, axis=0)
             if self.use_weight_map:
                 weight_map_batch = tf.stack(weight_map_batch, axis=0)
@@ -366,21 +387,20 @@ def calculate_and_save_weight_maps(mask_dir, weight_map_dir, sample_size=None):
         np.save(weight_map_path, weight_map)
 
 
-def get_minimum_image_size(image_dir, image_type):
+def do_statistic_on_image_size(image_dir, image_type):
     h_list = []
     w_list = []
     image_path_list = glob.glob(os.path.join(image_dir, "*." + image_type.lower()))
     assert len(image_path_list) != 0, "No {} files in this directory {}".format(image_type, image_dir)
 
-    for image_path in image_path_list:
+    for image_path in tqdm(image_path_list):
         image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         h_list.append(image.shape[0])
         w_list.append(image.shape[1])
 
-    h_min = min(h_list)
-    w_min = min(w_list)
-    print("{} images found. Minimum image size: h x w = {} x {}".format(len(image_path_list), h_min, w_min))
-    return h_min, w_min
+    statistic_df = pd.DataFrame(dict(image=image_path_list, height=h_list, width=w_list))
+    print(statistic_df.describe())
+    return statistic_df
 
 
 def _binarize_mask(pred_mask):
@@ -413,19 +433,29 @@ def postprocess_a_mask_batch(pred_mask_batch, binarize_threshold=0.5, remove_min
 
 
 if __name__ == '__main__':
-    image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
-    image_type = "tif"
-    mask_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks"
-    mask_type = "tif"
-    weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
-    weight_map_type = "npy"
-    dataset = "DIC"
+    # *: DIC dataset
+    # image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
+    # image_type = "tif"
+    # mask_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks"
+    # mask_type = "tif"
+    # weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
+    # weight_map_type = "npy"
+    # dataset = "DIC"
 
-    target_size = (256, 256)
+    # *: Training_2D dataset
+    image_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/img"
+    image_type = "png"
+    mask_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/seg"
+    mask_type = "png"
+    weight_map_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/wei"
+    weight_map_type = "png"
+    dataset = "training_2d"
+
+    target_size = (512, 512)
 
     bool_calculate_and_save_weight_maps = False
     bool_data_generator_test = True
-    bool_test_postprocessing = False
+    bool_do_statistic_on_image_sizes = False
 
     # Data preprocessing
     # calculate and save weight map files
@@ -433,7 +463,7 @@ if __name__ == '__main__':
         calculate_and_save_weight_maps(mask_dir=mask_dir, weight_map_dir=weight_map_dir, sample_size=None)
 
     if bool_data_generator_test:
-        data_gen_1 = DataGenerator(batch_size=1, dataset=dataset, mode="train", use_weight_map=True,
+        data_gen_1 = DataGenerator(batch_size=1, dataset_name=dataset, mode="train", use_weight_map=True,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
@@ -442,34 +472,27 @@ if __name__ == '__main__':
         for i in range(5):
             index = np.random.randint(0, len(data_gen_1.data_df))
             image, mask, weight_map = data_gen_1[index]
+            print(image.shape, mask.shape, weight_map.shape)
             image = image.numpy().squeeze()
             mask = mask.numpy().squeeze()
             weight_map = weight_map.numpy().squeeze()
-            f, ax = plt.subplots(1, 3)
+            f, ax = plt.subplots(1, 3, figsize=(12, 4))
             ax[0].imshow(image, cmap="gray", vmin=0, vmax=1)
             ax[1].imshow(mask, cmap="gray", vmin=0, vmax=1)
             ax[2].imshow(weight_map)
             f.show()
 
-
-    def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
-        pred_mask = (pred_mask >= binarize_threshold).astype(bool)
-        pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
-
-        return pred_mask
-
-
-    if bool_test_postprocessing:
-        image_path = "./predicted_mask.png"
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        image = image / 255
-        image_remove = postprocess_a_mask(image, binarize_threshold=0.5)
-
-        plt.imshow(image, cmap="gray", vmin=0, vmax=1)
-        plt.suptitle("original")
-        plt.show()
-
-        plt.imshow(image_remove, cmap="gray", vmin=0, vmax=1)
-        plt.suptitle("small objects removed")
-        plt.show()
-    print("done")
+    if bool_do_statistic_on_image_sizes:
+        """
+        *: training_2d
+                height        width
+        count   307.000000   307.000000
+        mean   1114.462541  1192.970684
+        std     652.918787   612.352724
+        min     420.000000   350.000000
+        25%     520.000000   696.000000
+        50%     760.000000   816.000000
+        75%    2048.000000  2048.000000
+        max    2048.000000  2048.000000
+        """
+        static_df = do_statistic_on_image_size(image_dir, image_type)

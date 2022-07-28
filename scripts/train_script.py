@@ -33,7 +33,7 @@ def script_train_unet(name=None, seed=None):
     mask_type = "tif"
     weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
     weight_map_type = "npy"
-    dataset = "DIC"
+    dataset_name = "DIC"
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
@@ -56,7 +56,7 @@ def script_train_unet(name=None, seed=None):
                                                     RandomFlip(),
                                                     RandomRotate(),
                                                     RandomZoomAndShift()])
-    data_gen_train = DataGenerator(batch_size=batch_size_train, dataset=dataset, mode="train",
+    data_gen_train = DataGenerator(batch_size=batch_size_train, dataset_name=dataset_name, mode="train",
                                    use_weight_map=train_use_weight_map,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
@@ -99,6 +99,7 @@ def script_train_unet(name=None, seed=None):
     return log_df
 
 
+# <editor-fold desc="Description">
 def script_train_gan(name=None, seed=None):
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = seed
@@ -113,7 +114,7 @@ def script_train_gan(name=None, seed=None):
     mask_type = "tif"
     weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
     weight_map_type = "npy"
-    dataset = "DIC"
+    dataset_name = "DIC"
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     pretrained_g_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
@@ -136,7 +137,7 @@ def script_train_gan(name=None, seed=None):
                                                     RandomFlip(),
                                                     RandomRotate(),
                                                     RandomZoomAndShift()])
-    data_gen_train = DataGenerator(batch_size=batch_size_train, dataset=dataset, mode="train",
+    data_gen_train = DataGenerator(batch_size=batch_size_train, dataset_name=dataset_name, mode="train",
                                    use_weight_map=train_use_weight_map,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
@@ -174,6 +175,9 @@ def script_train_gan(name=None, seed=None):
     return log_df
 
 
+# </editor-fold>
+
+
 def script_train_and_quantize_unet(name=None, seed=None, quantization=False):
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = seed
@@ -190,7 +194,7 @@ def script_train_and_quantize_unet(name=None, seed=None, quantization=False):
     mask_type = "tif"
     weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
     weight_map_type = "npy"
-    dataset = "DIC"
+    dataset_name = "DIC"
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet.h5"
@@ -215,7 +219,7 @@ def script_train_and_quantize_unet(name=None, seed=None, quantization=False):
                                                     RandomFlip(),
                                                     RandomRotate(),
                                                     RandomZoomAndShift()])
-    data_gen_train = DataGenerator(batch_size=batch_size_train, dataset=dataset, mode="train",
+    data_gen_train = DataGenerator(batch_size=batch_size_train, dataset_name=dataset_name, mode="train",
                                    use_weight_map=train_use_weight_map,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,

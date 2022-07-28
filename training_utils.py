@@ -227,7 +227,7 @@ if __name__ == '__main__':
                              levels=5,
                              pretrained_weights=pretrained_weight_path,
                              learning_rate=1e-4)
-    data_gen_train = DataGenerator(batch_size=batch_size, dataset=dataset, mode="train", use_weight_map=True,
+    data_gen_train = DataGenerator(batch_size=batch_size, dataset_name=dataset, mode="train", use_weight_map=True,
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,

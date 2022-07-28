@@ -7,6 +7,8 @@ import tensorflow_model_optimization as tfmot
 from data_augmentation import *
 
 
+# todo: pruning
+
 def quantize_unet(pretrained_unet, data_gen_train, data_gen_val, retrain_epochs, q_aware_checkpoint_path):
     q_aware_unet = tfmot.quantization.keras.quantize_model(pretrained_unet)
     q_aware_unet.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
@@ -42,8 +44,8 @@ def quantize_unet(pretrained_unet, data_gen_train, data_gen_val, retrain_epochs,
 
     float_unet_size = os.path.getsize(float_file) / float(2 ** 20)
     quant_unet_size = os.path.getsize(quant_file) / float(2 ** 20)
-    quantization_result = "Float unet size = {:.2f} MB".format(float_unet_size) + "\n" +\
-                          "Quantized unet size = {:.2f} MB".format(quant_unet_size) + "\n" +\
+    quantization_result = "Float unet size = {:.2f} MB".format(float_unet_size) + "\n" + \
+                          "Quantized unet size = {:.2f} MB".format(quant_unet_size) + "\n" + \
                           "Compression rate = {:.2f}×".format(float_unet_size / quant_unet_size)
 
     print(quantization_result)
