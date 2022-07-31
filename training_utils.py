@@ -8,7 +8,6 @@ from keras import callbacks
 from tqdm import tqdm
 
 from data import DataGenerator, postprocess_a_mask_batch
-from model import GAN
 
 
 def _callback_util_get_image_description(image_path_series: pd.Series):
@@ -92,104 +91,6 @@ def get_lr_scheduler(start_epoch=1):
             return 0.95 * lr
 
     return lr_scheduler
-
-
-def train_gan(gan: GAN, start_epoch, epochs, training_set, validation_set, tf_summary_writer_val_image=None,
-              tf_summary_writer_train_scaler=None, tf_summary_writer_val_scaler=None, epochs_not_train_g=3,
-              checkpoint_filepath=None):
-    assert not training_set.use_weight_map, "weight map is not needed for GAN training"
-    assert not validation_set.use_weight_map, "weight map is not needed for GAN validation"
-    print("Train discriminator but not generator in the first {} epochs".format(epochs_not_train_g))
-
-    if tf_summary_writer_val_image is not None:
-        with tf_summary_writer_val_image.as_default():
-            image_batch_val, _ = validation_set[0]
-            predicted_mask_batch = gan.generator(image_batch_val, training=False)
-            predicted_mask_batch = tf.cast(predicted_mask_batch >= 0.5, dtype=tf.float32)
-            tf.summary.image("Before_Training-Predicted_Masks", predicted_mask_batch, step=0)
-
-    log_df = pd.DataFrame(dict(epoch=[], train_g_loss=[], train_d_loss=[], val_binary_accuracy=[], val_binary_iou=[]))
-
-    for epoch in np.arange(start_epoch, start_epoch + epochs):
-        epoch_log_dict = dict(epoch=[epoch], train_g_loss=[np.NAN], train_d_loss=[np.NAN],
-                              val_binary_accuracy=[np.NAN], val_binary_iou=[np.NAN])
-
-        # *: train
-        train_g = epoch - start_epoch >= epochs_not_train_g
-        train_d = True
-        for step, (image_batch_train, mask_batch_train) in tqdm(enumerate(training_set),
-                                                                desc="Epoch {}".format(epoch),
-                                                                total=len(training_set)):
-            d_loss, g_loss, generated_masks = gan.train_step(image_batch_train, mask_batch_train,
-                                                             train_g=train_g, train_d=train_d)
-        # track train log and visualize in Tensorboard
-        d_loss = gan.disc_loss_tracker.result()
-        epoch_log_dict.update(train_d_loss=[d_loss])
-        g_loss = np.NAN
-        if train_g:
-            g_loss = gan.gen_loss_tracker.result()
-            epoch_log_dict.update(train_g_loss=[g_loss])
-        if tf_summary_writer_train_scaler is not None:
-            with tf_summary_writer_train_scaler.as_default():
-                tf.summary.scalar("epoch_loss_discriminator", d_loss, step=epoch)
-                if train_g:
-                    tf.summary.scalar("epoch_loss_generator", g_loss, step=epoch)
-        else:
-            print("train_loss-discriminator = {}".format(d_loss))
-            if train_g:
-                print("train_loss-generator = {}".format(g_loss))
-
-        # *: validate
-        max_batch_num = 3
-        image_list = []
-        ground_truth_mask_list = []
-        predicted_mask_list = []
-        image_info_list = []
-        for val_batch_index, (image_batch_val, mask_batch_val) in enumerate(validation_set):
-            predicted_mask_batch = gan.generator(image_batch_val, training=False)
-            gan.metric_binary_accuracy.update_state(mask_batch_val, predicted_mask_batch)
-            gan.metric_binary_IoU.update_state(mask_batch_val, predicted_mask_batch)
-            if val_batch_index <= max_batch_num:
-                predicted_mask_list.append(predicted_mask_batch)
-                image_path_series = validation_set.get_batch_dataframe(val_batch_index).loc[:, "image"]
-                image_info_list.append(_callback_util_get_image_description(image_path_series))
-                if epoch == 0:
-                    image_list.append(image_batch_val)
-                    ground_truth_mask_list.append(mask_batch_val)
-
-        if tf_summary_writer_val_image is not None:
-            with tf_summary_writer_val_image.as_default():
-                val_predicted_masks = tf.concat(predicted_mask_list, axis=0)
-                image_info = ", ".join(image_info_list)
-                if epoch == 0:
-                    images = tf.concat(image_list, axis=0)
-                    ground_truth_masks = tf.concat(ground_truth_mask_list, axis=0)
-                    tf.summary.image("Input_Images", images, step=0, description=image_info)
-                    tf.summary.image("Ground_Truth_Masks", ground_truth_masks, step=0, description=image_info)
-                tf.summary.image("Predicted_Masks", val_predicted_masks, step=epoch)
-
-        val_metric_binary_accuracy = gan.metric_binary_accuracy.result()
-        val_metric_binary_iou = gan.metric_binary_IoU.result()
-        # save unet weights
-        if train_g and epoch > start_epoch and val_metric_binary_iou > log_df.iloc[-1, :].loc["val_binary_iou"] and (
-                checkpoint_filepath is not None):
-            gan.generator.save_weights(checkpoint_filepath)
-
-        epoch_log_dict.update(val_binary_accuracy=[val_metric_binary_accuracy], val_binary_iou=[val_metric_binary_iou])
-        log_df = pd.concat([log_df, pd.DataFrame(epoch_log_dict)], ignore_index=True)
-
-        if tf_summary_writer_val_scaler is not None:
-            with tf_summary_writer_val_scaler.as_default():
-                tf.summary.scalar("epoch_binary_accuracy", val_metric_binary_accuracy, step=epoch)
-                tf.summary.scalar("epoch_binary_IoU", val_metric_binary_iou, step=epoch)
-        else:
-            print("val_metric-binary_accuracy = {}".format(val_metric_binary_accuracy))
-            print("val_metric-binary_IoU = {}".format(val_metric_binary_accuracy))
-
-        gan.reset_metric_states()
-
-    print("GAN training finished")
-    return log_df
 
 
 def evaluate_model_on_a_dataset(model, dataset, metric_list, postprocessing=True):
