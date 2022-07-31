@@ -94,7 +94,6 @@ def _center_pad_np(image, mask, weight_map, target_size, constant=0):
                             image.shape))
     end_tuple = tuple(map(operator.add, start_tuple, image.shape))
     slice_tuple = tuple(map(slice, start_tuple, end_tuple))
-
     new_image = np.ones(target_size, dtype=image.dtype) * constant
     new_image[slice_tuple[0], slice_tuple[1]] = image
     new_mask, new_weight_map = None, None
@@ -113,10 +112,15 @@ def _resize_with_pad_or_random_crop_and_rescale(image, mask, weight_map, target_
     elif image.shape[0] < target_size[0] and image.shape[1] < target_size[1]:
         new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, target_size, padding_constant)
     else:
-        padding_size = (max(target_size), max(target_size))
+        max_dimension = max([image.shape[0], image.shape[1], target_size[0], target_size[1]])
+        padding_size = (max_dimension, max_dimension)
         new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, padding_size, padding_constant)
-        new_image, new_mask, new_weight_map = _random_crop_np(image, mask, weight_map, target_size)
-    return new_image / 255.0, new_mask / 255.0, new_weight_map
+        new_image, new_mask, new_weight_map = _random_crop_np(new_image, new_mask, new_weight_map, target_size)
+
+    new_image = new_image / 255.0
+    if new_mask is not None:
+        new_mask = new_mask / 255.0
+    return new_image, new_mask, new_weight_map
 
 
 def _resize_with_pad_or_center_crop_and_rescale(image, mask, weight_map, target_size, padding_constant=0):
@@ -125,10 +129,14 @@ def _resize_with_pad_or_center_crop_and_rescale(image, mask, weight_map, target_
     elif image.shape[0] < target_size[0] and image.shape[1] < target_size[1]:
         new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, target_size, padding_constant)
     else:
-        padding_size = (max(target_size), max(target_size))
+        max_dimension = max([image.shape[0], image.shape[1], target_size[0], target_size[1]])
+        padding_size = (max_dimension, max_dimension)
         new_image, new_mask, new_weight_map = _center_pad_np(image, mask, weight_map, padding_size, padding_constant)
-        new_image, new_mask, new_weight_map = _center_crop_np(image, mask, weight_map, target_size)
-    return new_image / 255.0, new_mask / 255.0, new_weight_map
+        new_image, new_mask, new_weight_map = _center_crop_np(new_image, new_mask, new_weight_map, target_size)
+    new_image = new_image / 255.0
+    if new_mask is not None:
+        new_mask = new_mask / 255.0
+    return new_image, new_mask, new_weight_map
 
 
 def _reduce_size_before_resize(image, mask, weight_map, target_size):
@@ -228,7 +236,8 @@ class DataGenerator(Sequence):
             # *: therefore it's necessary to reduce the size
             if self.dataset_name == "training_2d":
                 image_i, mask_i, weight_map_i = _reduce_size_before_resize(image_i, mask_i, weight_map_i,
-                                                                           target_size)
+                                                                           self.target_size)
+
             if self.mode == "train":
                 image_i, mask_i, weight_map_i = \
                     _resize_with_pad_or_random_crop_and_rescale(image=image_i, mask=mask_i, weight_map=weight_map_i,
@@ -434,22 +443,22 @@ def postprocess_a_mask_batch(pred_mask_batch, binarize_threshold=0.5, remove_min
 
 if __name__ == '__main__':
     # *: DIC dataset
-    # image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
-    # image_type = "tif"
-    # mask_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks"
-    # mask_type = "tif"
-    # weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
-    # weight_map_type = "npy"
-    # dataset = "DIC"
+    image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
+    image_type = "tif"
+    mask_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks"
+    mask_type = "tif"
+    weight_map_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Weights"
+    weight_map_type = "npy"
+    dataset = "DIC"
 
     # *: Training_2D dataset
-    image_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/img"
-    image_type = "png"
-    mask_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/seg"
-    mask_type = "png"
-    weight_map_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/wei"
-    weight_map_type = "png"
-    dataset = "training_2d"
+    # image_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/img"
+    # image_type = "png"
+    # mask_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/seg"
+    # mask_type = "png"
+    # weight_map_dir = "E:/ED_MS/Semester_3/Dataset/training_2D/training/segmentation_set/wei"
+    # weight_map_type = "png"
+    # dataset = "training_2d"
 
     target_size = (512, 512)
 
@@ -467,12 +476,15 @@ if __name__ == '__main__':
                                    image_dir=image_dir, image_type=image_type,
                                    mask_dir=mask_dir, mask_type=mask_type,
                                    weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-                                   target_size=target_size, data_aug_transform=None, seed=None)
+                                   target_size=target_size, data_aug_transform=None, seed=1)
 
-        for i in range(5):
+        for i in range(8):
             index = np.random.randint(0, len(data_gen_1.data_df))
             image, mask, weight_map = data_gen_1[index]
-            print(image.shape, mask.shape, weight_map.shape)
+            for tensor in [image, mask]:
+                print(tensor.shape)
+                print(tf.reduce_min(tensor), tf.reduce_max(tensor))
+
             image = image.numpy().squeeze()
             mask = mask.numpy().squeeze()
             weight_map = weight_map.numpy().squeeze()

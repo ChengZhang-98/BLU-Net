@@ -3,13 +3,8 @@ import os
 import keras.backend
 import numpy as np
 import tensorflow as tf
-from keras import metrics
-from keras.layers import (Input,
-                          Conv2D,
-                          MaxPooling2D,
-                          Dropout,
-                          UpSampling2D,
-                          Concatenate, BatchNormalization, LeakyReLU, Flatten, Dense)
+from keras import metrics, initializers
+from keras import layers
 from keras.losses import BinaryCrossentropy
 from keras.metrics import BinaryAccuracy, BinaryIoU
 from keras.models import Model
@@ -19,49 +14,50 @@ from tqdm import tqdm
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
-def _get_contracting_block(input_layer, filters, conv2d_params, dropout=0, name="Contracting"):
-    pool = MaxPooling2D(pool_size=(2, 2), name=name + "_MaxPooling2D")(input_layer)
-    conv1 = Conv2D(filters, 3, **conv2d_params, name=name + "_Conv2D_1")(pool)
-    conv2 = Conv2D(filters, 3, **conv2d_params, name=name + "_Conv2D_2")(conv1)
+def _get_contracting_block(input_layer, filters, conv2d_layer, conv2d_params, dropout=0, name="Contracting"):
+    pool = layers.MaxPooling2D(pool_size=(2, 2), name=name + "_MaxPooling2D")(input_layer)
+    conv1 = conv2d_layer(filters, 3, **conv2d_params, name=name + "_Conv2D_1")(pool)
+    conv2 = conv2d_layer(filters, 3, **conv2d_params, name=name + "_Conv2D_2")(conv1)
 
     if dropout == 0:
         return conv2
     else:
-        return Dropout(rate=dropout, name=name + "_Dropout")(conv2)
+        return layers.Dropout(rate=dropout, name=name + "_Dropout")(conv2)
 
 
-def _get_expanding_block(input_layer, skip_layer, filters, conv2d_params, dropout=0, name="Expanding"):
-    up = UpSampling2D(size=(2, 2), name=name + "_UpSampling2D")(input_layer)
-    conv1 = Conv2D(filters, 2, **conv2d_params, name=name + "_Conv2D_1")(up)
-    merge = Concatenate(axis=3, name=name + "_Concatenate")([skip_layer, conv1])
-    conv2 = Conv2D(filters, 3, **conv2d_params, name=name + "_Conv2D_2")(merge)
-    conv3 = Conv2D(filters, 3, **conv2d_params, name=name + "_Conv2D_3")(conv2)
+def _get_expanding_block(input_layer, skip_layer, filters, conv2d_layer, conv2d_params, dropout=0, name="Expanding"):
+    up = layers.UpSampling2D(size=(2, 2), name=name + "_UpSampling2D")(input_layer)
+    conv1 = conv2d_layer(filters, 2, **conv2d_params, name=name + "_Conv2D_1")(up)
+    merge = layers.Concatenate(axis=3, name=name + "_Concatenate")([skip_layer, conv1])
+    conv2 = conv2d_layer(filters, 3, **conv2d_params, name=name + "_Conv2D_2")(merge)
+    conv3 = conv2d_layer(filters, 3, **conv2d_params, name=name + "_Conv2D_3")(conv2)
 
     if dropout == 0:
         return conv3
     else:
-        return Dropout(rate=dropout, name=name + "_Dropout")(conv3)
+        return layers.Dropout(rate=dropout, name=name + "_Dropout")(conv3)
 
 
-def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0, levels=5):
+def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0, num_levels=5):
     conv2d_parameters = {
         "activation": "relu",
         "padding": "same",
         "kernel_initializer": "he_normal",
     }
-    inputs = Input(input_size, name="true_input")
+    inputs = layers.Input(input_size, name="true_input")
     filters = 64
 
-    conv = Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_1")(inputs)
-    conv = Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_2")(conv)
+    conv = layers.Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_1")(inputs)
+    conv = layers.Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_2")(conv)
 
     level = 0
     contracting_outputs = [conv]
-    for level in range(1, levels):
+    for level in range(1, num_levels):
         filters *= 2
         contracting_outputs.append(
             _get_contracting_block(input_layer=contracting_outputs[-1],
                                    filters=filters,
+                                   conv2d_layer=layers.Conv2D,
                                    conv2d_params=conv2d_parameters,
                                    dropout=dropout,
                                    name="Level{}_Contracting".format(level)
@@ -75,20 +71,21 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
         expanding_output = _get_expanding_block(input_layer=expanding_output,
                                                 skip_layer=contracting_outputs.pop(),
                                                 filters=filters,
+                                                conv2d_layer=layers.Conv2D,
                                                 conv2d_params=conv2d_parameters,
                                                 dropout=dropout,
                                                 name="Level{}_Expanding".format(level))
 
-    output = Conv2D(output_classes, 1, activation=final_activation, name="true_output")(expanding_output)
+    output = layers.Conv2D(output_classes, 1, activation=final_activation, name="true_output")(expanding_output)
 
     unet_model = Model(inputs=inputs, outputs=output, name="Uncompiled_Unet")
 
     return unet_model
 
 
-def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4):
+def get_compiled_unet(input_size, num_levels, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4):
     unet_model = get_uncompiled_unet(input_size, final_activation=final_activation, output_classes=1, dropout=0,
-                                     levels=levels)
+                                     num_levels=num_levels)
     bce_loss_from_logits = final_activation != "sigmoid"
     unet_model.compile(optimizer=Adam(learning_rate=learning_rate),
                        loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),
@@ -103,12 +100,12 @@ def get_compiled_unet(input_size, levels, final_activation="sigmoid", pretrained
 def _get_conv_block(x, filters, activation,
                     kernel_size=(3, 3), strides=(1, 1), padding="same", use_bias=True,
                     use_bn=False, use_dropout=False, drop_value=0.5):
-    x = Conv2D(filters, kernel_size, strides=strides, padding=padding, use_bias=use_bias)(x)
+    x = layers.Conv2D(filters, kernel_size, strides=strides, padding=padding, use_bias=use_bias)(x)
     if use_bn:
-        x = BatchNormalization()(x)
+        x = layers.BatchNormalization()(x)
     x = activation(x)
     if use_dropout:
-        x = Dropout(drop_value)(x)
+        x = layers.Dropout(drop_value)(x)
     return x
 
 
@@ -119,29 +116,29 @@ def get_discriminator(input_size, dropout=0.2):
     :param dropout:
     :return:
     """
-    inputs = Input(input_size)
+    inputs = layers.Input(input_size)
 
     x = _get_conv_block(inputs, 64, kernel_size=(5, 5), strides=(2, 2),
-                        use_bn=False, use_bias=True, activation=LeakyReLU(0.2),
+                        use_bn=False, use_bias=True, activation=layers.LeakyReLU(0.2),
                         use_dropout=False, drop_value=0.3)
     x = _get_conv_block(x, 128, kernel_size=(5, 5), strides=(2, 2),
-                        use_bn=False, activation=LeakyReLU(0.2), use_bias=True,
+                        use_bn=False, activation=layers.LeakyReLU(0.2), use_bias=True,
                         use_dropout=True, drop_value=0.3)
     x = _get_conv_block(x, 256, kernel_size=(5, 5), strides=(2, 2),
-                        use_bn=False, activation=LeakyReLU(0.2), use_bias=True,
+                        use_bn=False, activation=layers.LeakyReLU(0.2), use_bias=True,
                         use_dropout=True, drop_value=0.3)
     x = _get_conv_block(x, 512, kernel_size=(5, 5),
-                        strides=(2, 2), use_bn=False, activation=LeakyReLU(0.2),
+                        strides=(2, 2), use_bn=False, activation=layers.LeakyReLU(0.2),
                         use_bias=True, use_dropout=True, drop_value=0.3)
 
     # *: one more conv_block than https://keras.io/examples/generative/wgan_gp/
     x = _get_conv_block(x, 1024, kernel_size=(5, 5),
-                        strides=(2, 2), use_bn=False, activation=LeakyReLU(0.2),
+                        strides=(2, 2), use_bn=False, activation=layers.LeakyReLU(0.2),
                         use_bias=True, use_dropout=False, drop_value=0.3)
 
-    x = Flatten()(x)
-    x = Dropout(0.2)(x)
-    y = Dense(1)(x)
+    x = layers.Flatten()(x)
+    x = layers.Dropout(0.2)(x)
+    y = layers.Dense(1)(x)
 
     return Model(inputs, y, name="discriminator")
 
@@ -219,6 +216,63 @@ class GAN:
         return d_loss, g_loss, generated_masks
 
 
+def get_uncompiled_lightweight_unet(input_size, final_activation, output_classes, dropout=0, num_levels=5):
+    conv2d_parameters = {
+        "activation": "relu",
+        "padding": "same",
+        "kernel_initializer": "he_normal",
+    }
+    inputs = layers.Input(input_size, name="true_input")
+    filters = 64
+
+    conv = layers.Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_1")(inputs)
+    conv = layers.Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_2")(conv)
+
+    level = 0
+    contracting_outputs = [conv]
+    for level in range(1, num_levels):
+        filters *= 2
+        contracting_outputs.append(
+            _get_contracting_block(input_layer=contracting_outputs[-1],
+                                   filters=filters,
+                                   conv2d_layer=layers.SeparableConv2D,
+                                   conv2d_params=conv2d_parameters,
+                                   dropout=dropout,
+                                   name="Level{}_Lightweight_Contracting".format(level)
+                                   )
+        )
+
+    expanding_output = contracting_outputs.pop()
+    while level > 0:
+        level -= 1
+        filters = int(filters / 2)
+        expanding_output = _get_expanding_block(input_layer=expanding_output,
+                                                skip_layer=contracting_outputs.pop(),
+                                                filters=filters,
+                                                conv2d_layer=layers.SeparableConv2D,
+                                                conv2d_params=conv2d_parameters,
+                                                dropout=dropout,
+                                                name="Level{}_Lightweight_Expanding".format(level))
+
+    output = layers.Conv2D(output_classes, 1, activation=final_activation, name="true_output")(expanding_output)
+
+    lw_unet_model = Model(inputs=inputs, outputs=output, name="Uncompiled_Unet")
+
+    return lw_unet_model
+
+
+def get_compiled_lightweight_unet(input_size, num_levels=5, output_classes=1, learning_rate=1e-3, pretrained_weight=None):
+    lw_unet = get_uncompiled_lightweight_unet(input_size=input_size,
+                                              final_activation="sigmoid",
+                                              output_classes=output_classes, num_levels=num_levels)
+    lw_unet.compile(optimizer=Adam(learning_rate=learning_rate),
+                    loss=BinaryCrossentropy(name="weighted_binary_crossentropy"),
+                    metrics=[BinaryIoU(name="binary_IoU", target_class_ids=[1], threshold=0.5)])
+    if pretrained_weight is not None:
+        lw_unet.load_weights(filepath=pretrained_weight)
+    return lw_unet
+
+
 if __name__ == '__main__':
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = None
@@ -234,4 +288,8 @@ if __name__ == '__main__':
     weight_map_type = "npy"
     dataset = "DIC"
 
-    discriminator = get_discriminator((512, 512, 1))
+    x_rand = tf.random.uniform((batch_size, *target_size, 1))
+    lw_unet = get_compiled_lightweight_unet(input_size=(*target_size, 1), num_levels=4)
+    y_lw_unet = lw_unet(x_rand, training=False)
+    unet = get_compiled_unet(input_size=(*target_size, 1), num_levels=4)
+    y_unet = unet(x_rand, training=False)

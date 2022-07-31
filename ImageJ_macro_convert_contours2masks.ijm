@@ -11,6 +11,7 @@ function convertContours2Mask(input_dir, input_file, output_dir){
 	end_index = lengthOf(input_file)-4;
 	input_file_name = substring(input_file, 0, end_index);
 	saveAs("Tiff", output_dir + input_file_name + "_mask.tif");
+	// saveAs("Tiff", output_dir + input_file);
 	close();
 	selectWindow(input_file);
 	close();

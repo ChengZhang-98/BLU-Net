@@ -89,13 +89,14 @@ def get_lr_scheduler(start_epoch=1):
         if epoch < start_epoch:
             return lr
         else:
-            return np.exp(-0.1) * lr
+            return 0.95 * lr
 
     return lr_scheduler
 
 
 def train_gan(gan: GAN, start_epoch, epochs, training_set, validation_set, tf_summary_writer_val_image=None,
-              tf_summary_writer_train_scaler=None, tf_summary_writer_val_scaler=None, epochs_not_train_g=3):
+              tf_summary_writer_train_scaler=None, tf_summary_writer_val_scaler=None, epochs_not_train_g=3,
+              checkpoint_filepath=None):
     assert not training_set.use_weight_map, "weight map is not needed for GAN training"
     assert not validation_set.use_weight_map, "weight map is not needed for GAN validation"
     print("Train discriminator but not generator in the first {} epochs".format(epochs_not_train_g))
@@ -117,7 +118,8 @@ def train_gan(gan: GAN, start_epoch, epochs, training_set, validation_set, tf_su
         train_g = epoch - start_epoch >= epochs_not_train_g
         train_d = True
         for step, (image_batch_train, mask_batch_train) in tqdm(enumerate(training_set),
-                                                                desc="Epoch {}".format(epoch)):
+                                                                desc="Epoch {}".format(epoch),
+                                                                total=len(training_set)):
             d_loss, g_loss, generated_masks = gan.train_step(image_batch_train, mask_batch_train,
                                                              train_g=train_g, train_d=train_d)
         # track train log and visualize in Tensorboard
@@ -168,6 +170,11 @@ def train_gan(gan: GAN, start_epoch, epochs, training_set, validation_set, tf_su
 
         val_metric_binary_accuracy = gan.metric_binary_accuracy.result()
         val_metric_binary_iou = gan.metric_binary_IoU.result()
+        # save unet weights
+        if train_g and epoch > start_epoch and val_metric_binary_iou > log_df.iloc[-1, :].loc["val_binary_iou"] and (
+                checkpoint_filepath is not None):
+            gan.generator.save_weights(checkpoint_filepath)
+
         epoch_log_dict.update(val_binary_accuracy=[val_metric_binary_accuracy], val_binary_iou=[val_metric_binary_iou])
         log_df = pd.concat([log_df, pd.DataFrame(epoch_log_dict)], ignore_index=True)
 
@@ -224,7 +231,7 @@ if __name__ == '__main__':
     end_epoch = 15
 
     unet = get_compiled_unet(input_size=(*target_size, 1),
-                             levels=5,
+                             num_levels=5,
                              pretrained_weights=pretrained_weight_path,
                              learning_rate=1e-4)
     data_gen_train = DataGenerator(batch_size=batch_size, dataset_name=dataset, mode="train", use_weight_map=True,
