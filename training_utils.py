@@ -107,6 +107,39 @@ def evaluate_model_on_a_dataset(model, dataset, metric_list, postprocessing=True
     return metric_list
 
 
+class CustomBinaryIoU(tf.keras.metrics.Metric):
+    """
+    threshold y_true and y_predict before calculating binary IoU
+    this makes sense because data augmentation may produce interpolated values neither 0 nor 1
+    """
+    def __init__(self, threshold=0.5, name="Binary_IoU", **kwargs):
+        super(CustomBinaryIoU, self).__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.binary_iou = self.add_weight(name=name, initializer="zeros")
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        logical_y_true = y_true > self.threshold
+        logical_y_pred = y_pred > self.threshold
+
+        m11 = tf.logical_and(logical_y_true, logical_y_pred)
+        m10 = tf.logical_and(logical_y_true, tf.logical_not(logical_y_pred))
+        m01 = tf.logical_and(tf.logical_not(logical_y_true), logical_y_pred)
+
+        true_positives = tf.reduce_sum(tf.cast(m11, dtype=tf.float32), axis=(1, 2, 3))
+        false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
+        false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
+
+        mean_iou = tf.reduce_mean(true_positives / (true_positives + false_negatives + false_positives))
+
+        self.binary_iou.assign(mean_iou)
+
+    def reset_state(self):
+        self.binary_iou.assign(0.0)
+
+    def result(self):
+        return self.binary_iou
+
+
 if __name__ == '__main__':
     from model import get_compiled_unet
     import keras

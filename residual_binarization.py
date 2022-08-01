@@ -38,6 +38,29 @@ def approximate_weights_via_residual_binarization(w, gamma):
     return approximated_w
 
 
+def get_binary_representation(w, gamma):
+    gamma_b_pairs = []
+    residual = tf.convert_to_tensor(w)
+    approximate_w = tf.zeros_like(w, trainable=False)
+    gamma = tf.convert_to_tensor(gamma)
+    for gamma_m in gamma:
+        b = tf.sign(residual)
+        residual = residual - tf.abs(gamma_m) * b
+        gamma_b_pairs.append((gamma_m.numpy(), tf.cast(b, dtype=tf.bool).numpy()))
+    return gamma_b_pairs
+
+
+def count_residual_binarization_weights(weight_list, gamma_list):
+    assert len(weight_list) == len(gamma_list), "Unmatched len(weight_list) and len(gamma_list)"
+    binary_weight_counts = 0
+    gamma_counts = 0
+    for weight, gamma in zip(weight_list, gamma_list):
+        binary_weight_counts += tf.reduce_prod(weight.shape) * tf.reduce_prod(gamma.shape)
+        gamma_counts += tf.reduce_prod(gamma.shape)
+
+    return {"binary_weight_counts": binary_weight_counts, "gamma_counts": gamma_counts}
+
+
 class BinarySignActivation(layers.Layer):
     """
     refer to ReBNet (https://arxiv.org/abs/1711.01243)
@@ -57,14 +80,15 @@ class BinarySignActivation(layers.Layer):
                                      trainable=True)
 
     def call(self, inputs, *args, **kwargs):
-        residual = inputs  # variable r in Algorithm 1
-        approximated_outputs = 0
-        for m in range(self.num_residual_levels):
-            gamma_m = self.gamma[m]
-            temp = tf.abs(gamma_m) * binarize(residual)
-            residual = residual - temp
-            approximated_outputs = approximated_outputs + temp
-        return approximated_outputs
+        # residual = inputs  # variable r in Algorithm 1
+        # approximated_outputs = tf.zeros_like(inputs)
+        # for m in range(self.num_residual_levels):
+        #     gamma_m = self.gamma[m]
+        #     temp = tf.abs(gamma_m) * binarize(residual)
+        #     residual = residual - temp
+        #     approximated_outputs = approximated_outputs + temp
+        # return approximated_outputs
+        return approximate_weights_via_residual_binarization(inputs, self.gamma)
 
     def get_config(self):
         return dict(num_residual_levels=self.num_residual_levels)

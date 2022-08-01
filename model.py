@@ -6,12 +6,13 @@ import tensorflow as tf
 from keras import metrics, initializers
 from keras import layers
 from keras.losses import BinaryCrossentropy
-from keras.metrics import BinaryAccuracy, BinaryIoU
+from keras.metrics import BinaryAccuracy, BinaryIoU, OneHotIoU, IoU
 from keras.models import Model
 from keras.optimizers import Adam
 from tqdm import tqdm
 
 from residual_binarization import BinarySignActivation, BinaryConv2D, BinarySeparableConv2D
+from training_utils import CustomBinaryIoU
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -104,8 +105,10 @@ def get_compiled_unet(input_size, num_levels, final_activation="sigmoid", pretra
     bce_loss_from_logits = final_activation != "sigmoid"
     unet_model.compile(optimizer=Adam(learning_rate=learning_rate),
                        loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),
-                       metrics=[BinaryAccuracy(name="binary_accuracy", threshold=0.5),
-                                BinaryIoU(name="binary_IoU", target_class_ids=[1], threshold=0.5)])
+                       metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
+                                BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
+    # keras.metrics.BinaryIoU can not deal with interpolated values between 0.0 and 1.0
+    # metrics=[BinaryIoU(name="binary_IoU", target_class_ids=[1], threshold=0.5)])
     if pretrained_weights is not None:
         unet_model.load_weights(filepath=pretrained_weights)
 
@@ -164,7 +167,8 @@ def get_compiled_lightweight_unet(input_size, num_levels=5, output_classes=1, le
                                               output_classes=output_classes, num_levels=num_levels)
     lw_unet.compile(optimizer=Adam(learning_rate=learning_rate),
                     loss=BinaryCrossentropy(name="weighted_binary_crossentropy"),
-                    metrics=[BinaryIoU(name="binary_IoU", target_class_ids=[1], threshold=0.5)])
+                    metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
+                             BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
     if pretrained_weight is not None:
         lw_unet.load_weights(filepath=pretrained_weight)
     return lw_unet
@@ -280,7 +284,8 @@ def get_compiled_binary_unet(input_size, num_activation_residual_levels=3, num_c
                                              num_levels=num_levels, conv_kernel_initializer_seed=initializer_seed)
     binary_unet.compile(optimizer=Adam(learning_rate=learning_rate),
                         loss=BinaryCrossentropy(name="binary_crossentropy"),
-                        metrics=[BinaryIoU(target_class_ids=[1], threshold=0.5, name="binary_IoU")])
+                        metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
+                                 BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
     if pretrained_weight is not None:
         binary_unet.load_weights(filepath=pretrained_weight)
     return binary_unet
