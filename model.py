@@ -291,6 +291,104 @@ def get_compiled_binary_unet(input_size, num_activation_residual_levels=3, num_c
     return binary_unet
 
 
+def get_uncompiled_binary_lightweight_unet(input_size,
+                                           num_activation_residual_levels,
+                                           num_conv_residual_levels,
+                                           num_residual_levels_depthwise_filter,
+                                           num_residual_levels_pointwise_filter,
+                                           output_classes,
+                                           num_levels=5,
+                                           conv_kernel_initializer_seed=1):
+    inputs = layers.Input(input_size, name="input")
+    filters = 64
+
+    conv = BinaryConv2D(num_residual_levels=num_conv_residual_levels, filters=filters, kernel_size=3,
+                        padding="SAME", name="Level0_BinaryConv2D_1")(inputs)
+    conv = BinarySignActivation(num_residual_levels=num_activation_residual_levels,
+                                name="Level0_BinarySignActivation_1")(conv)
+    conv = BinaryConv2D(num_residual_levels=num_conv_residual_levels, filters=filters, kernel_size=3,
+                        padding="SAME", name="Level0_BinaryConv2D_2")(conv)
+    conv = BinarySignActivation(num_residual_levels=num_activation_residual_levels,
+                                name="Level0_BinarySignActivation_2")(conv)
+
+    level = 0
+    contracting_outputs = [conv]
+    for level in range(1, num_levels):
+        filters *= 2
+        contracting_outputs.append(
+            _get_binary_contracting_block(
+                inputs=contracting_outputs[-1],
+                conv2d_layer=BinarySeparableConv2D,
+                num_activation_residual_levels=num_activation_residual_levels,
+                conv_residual_level_dict=dict(
+                    num_residual_levels_depthwise_filter=num_residual_levels_depthwise_filter,
+                    num_residual_levels_pointwise_filter=num_residual_levels_pointwise_filter),
+                filters=filters,
+                padding="SAME",
+                kernel_initializer_seed=conv_kernel_initializer_seed,
+                name="Level{}_BinaryLightweight_Contracting".format(level)
+            )
+        )
+
+    expanding_output = contracting_outputs.pop()
+    while level > 0:
+        level -= 1
+        filters = filters // 2
+        expanding_output = _get_binary_expanding_block(
+            inputs=expanding_output,
+            skip_connection=contracting_outputs.pop(),
+            conv2d_layer=BinarySeparableConv2D,
+            num_activation_residual_levels=num_activation_residual_levels,
+            conv_residual_level_dict=dict(
+                num_residual_levels_depthwise_filter=num_residual_levels_depthwise_filter,
+                num_residual_levels_pointwise_filter=num_residual_levels_pointwise_filter
+            ),
+            filters=filters,
+            padding="SAME",
+            kernel_initializer_seed=conv_kernel_initializer_seed,
+            name="Level{}_BinaryLightweight_Expanding".format(level)
+        )
+
+    output = BinaryConv2D(num_residual_levels=num_conv_residual_levels, filters=output_classes, kernel_size=1,
+                          name="logit_output")(expanding_output)
+    output = layers.Activation(tf.nn.sigmoid, name="sigmoid_output")(output)
+
+    binary_unet_model = Model(inputs=inputs, outputs=output, name="UncompiledBinaryLightweightUnet")
+    return binary_unet_model
+
+
+def get_compiled_binary_lightweight_unet(input_size,
+                                         num_activation_residual_levels=3,
+                                         num_conv_residual_levels=3,
+                                         num_depthwise_conv_residual_levels=3,
+                                         num_pointwise_conv_residual_levels=3,
+                                         output_classes=1,
+                                         num_levels=5,
+                                         initializer_seed=1,
+                                         learning_rate=1e-3,
+                                         pretrained_weight=None):
+    binary_lightweight_unet = get_uncompiled_binary_lightweight_unet(
+        input_size=input_size,
+        num_activation_residual_levels=num_activation_residual_levels,
+        num_conv_residual_levels=num_conv_residual_levels,
+        num_residual_levels_depthwise_filter=num_depthwise_conv_residual_levels,
+        num_residual_levels_pointwise_filter=num_pointwise_conv_residual_levels,
+        output_classes=output_classes,
+        num_levels=num_levels,
+        conv_kernel_initializer_seed=initializer_seed
+    )
+
+    binary_lightweight_unet.compile(optimizer=Adam(learning_rate=learning_rate),
+                                    loss=BinaryCrossentropy(name="binary_crossentropy"),
+                                    metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
+                                             BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
+
+    if pretrained_weight is not None:
+        binary_lightweight_unet.load_weights(pretrained_weight)
+
+    return binary_lightweight_unet
+
+
 if __name__ == '__main__':
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = None
@@ -307,15 +405,21 @@ if __name__ == '__main__':
     dataset = "DIC"
 
     x_rand = tf.random.uniform((batch_size, *target_size, 1))
-    # lw_unet = get_compiled_lightweight_unet(input_size=(*target_size, 1), num_levels=4)
+    lw_unet = get_compiled_lightweight_unet(input_size=(*target_size, 1), num_levels=5)
     # y_lw_unet = lw_unet(x_rand, training=False)
     # unet = get_compiled_unet(input_size=(*target_size, 1), num_levels=4)
     # y_unet = unet(x_rand, training=False)
 
-    unet = get_compiled_unet((*target_size, 1), num_levels=5)
+    # unet = get_compiled_unet((*target_size, 1), num_levels=5)
     # lightweight_unet = get_compiled_lightweight_unet((*target_size, 1), 5)
 
-    binary_unet = get_compiled_binary_unet((*target_size, 1))
-    from residual_binarization import transfer_unet_weights_to_binary_unet
+    # binary_unet = get_compiled_binary_unet((*target_size, 1))
 
-    binary_unet = transfer_unet_weights_to_binary_unet(unet, binary_unet)
+    binary_lightweight_unet = get_compiled_binary_lightweight_unet((*target_size, 1))
+    # y_blw_unet = binary_lightweight_unet(x_rand, training=False)
+
+    from residual_binarization import transfer_lightweight_unet_weights_to_binary_lightweight_unet
+
+    binary_lightweight_unet = transfer_lightweight_unet_weights_to_binary_lightweight_unet(lw_unet,
+                                                                                           binary_lightweight_unet)
+    y_blw_unet = binary_lightweight_unet(x_rand, training=False)

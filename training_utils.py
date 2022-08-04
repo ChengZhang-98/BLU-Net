@@ -112,6 +112,7 @@ class CustomBinaryIoU(tf.keras.metrics.Metric):
     threshold y_true and y_predict before calculating binary IoU
     this makes sense because data augmentation may produce interpolated values neither 0 nor 1
     """
+
     def __init__(self, threshold=0.5, name="Binary_IoU", **kwargs):
         super(CustomBinaryIoU, self).__init__(name=name, **kwargs)
         self.threshold = threshold
@@ -138,6 +139,11 @@ class CustomBinaryIoU(tf.keras.metrics.Metric):
 
     def result(self):
         return self.binary_iou
+
+
+def append_info_to_notes(notes=None, **kwargs):
+    lines = ["{} = {}".format(k, w) for k, w in kwargs.items()]
+    return notes + "\n" + "\n".join(lines)
 
 
 if __name__ == '__main__':

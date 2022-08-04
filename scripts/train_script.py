@@ -8,25 +8,26 @@ from keras import callbacks
 import pandas as pd
 
 from data import DataGenerator
-from model import get_compiled_unet, get_compiled_lightweight_unet
+from model import (get_compiled_unet, get_compiled_lightweight_unet,
+                   get_compiled_binary_unet, get_compiled_binary_lightweight_unet)
 from data import DataGenerator
 
 from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, RandomRotate,
                                RandomZoomAndShift, DataAugmentation, RandomRot90)
-from training_utils import get_validation_plot_callback, train_val_split, get_lr_scheduler
+from training_utils import get_validation_plot_callback, train_val_split, get_lr_scheduler, append_info_to_notes
 
 
 # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
 
-def script_fine_tune_vanilla_unet(name=None, seed=None, train_val_split_ratio=0.8):
+def script_fine_tune_vanilla_unet(name=None, seed=None, train_val_split_ratio=0.8, notes=None):
     seed = seed
     batch_size_train = 1
     target_size = (512, 512)
-    train_use_weight_map = False
+    train_use_weight_map = True
     val_use_weight_map = False
     pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/" \
                              "unet_agarpads_seg_evaluation2.hdf5"
-    learning_rate = 1e-4
+    learning_rate = 1e-5
 
     image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
     image_type = "tif"
@@ -39,12 +40,16 @@ def script_fine_tune_vanilla_unet(name=None, seed=None, train_val_split_ratio=0.
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet-fine-tuned.h5"
     start_epoch = 0
-    end_epoch = 100
+    end_epoch = 50
 
     if name is None:
         logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     else:
         logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}".format(name))
+
+    if notes is not None:
+        with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
+            f.write(notes)
 
     unet = get_compiled_unet(input_size=(*target_size, 1),
                              num_levels=5,
@@ -106,7 +111,7 @@ def script_fine_tune_vanilla_unet(name=None, seed=None, train_val_split_ratio=0.
     return log_df
 
 
-def script_train_vanilla_unet_from_scratch(name=None, seed=None, train_val_split_ratio=0.8):
+def script_train_vanilla_unet_from_scratch(name=None, seed=None, train_val_split_ratio=0.8, notes=None):
     seed = seed
     batch_size_train = 1
     target_size = (512, 512)
@@ -131,6 +136,11 @@ def script_train_vanilla_unet_from_scratch(name=None, seed=None, train_val_split
         logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     else:
         logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}".format(name))
+
+    if notes is not None:
+        with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
+            f.write(notes)
+
     # *: levels, learning_rate
     unet = get_compiled_unet(input_size=(*target_size, 1),
                              num_levels=5,
@@ -191,7 +201,7 @@ def script_train_vanilla_unet_from_scratch(name=None, seed=None, train_val_split
     return log_df
 
 
-def script_train_lightweight_unet_from_scratch(name=None, seed=None, train_val_split_ratio=0.8):
+def script_train_lightweight_unet_from_scratch(name=None, seed=None, train_val_split_ratio=0.8, notes=None):
     seed = seed
     batch_size_train = 1
     target_size = (512, 512)
@@ -227,6 +237,10 @@ def script_train_lightweight_unet_from_scratch(name=None, seed=None, train_val_s
         logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     else:
         logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}".format(name))
+
+    if notes is not None:
+        with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
+            f.write(notes)
 
     tf.keras.backend.clear_session()
     lw_unet = get_compiled_lightweight_unet(input_size=(*target_size, 1),
@@ -265,7 +279,7 @@ def script_train_lightweight_unet_from_scratch(name=None, seed=None, train_val_s
     validation_plot_callback = get_validation_plot_callback(lw_unet, data_gen_val, [0, 1],
                                                             tensorboard_val_image_writer, max_output=4)
 
-    # *：lr_scheduler_callback is removed
+    # *: callbacks
     callback_list = [tensorboard_callback, validation_plot_callback,
                      model_checkpoint_callback, lr_scheduler_callback]
 
@@ -291,13 +305,15 @@ def script_train_lightweight_unet_from_scratch(name=None, seed=None, train_val_s
 
 
 if __name__ == '__main__':
-    # log_df_unet = script_fine_tune_vanilla_unet(name="vanilla_unet-fine-tune", seed=1, train_val_split_ratio=0.8)
+    # log_df_unet = script_fine_tune_vanilla_unet(name="vanilla_unet-fine-tune-weighted_loss-2", seed=1,
+    #                                             train_val_split_ratio=0.8)
 
     # log_df_unet_trained_from_scratch = \
     #     script_train_vanilla_unet_from_scratch(name="vanilla_unet-trained_from_scratch",
     #                                            seed=1, train_val_split_ratio=0.8)
 
-    log_df_lw_unet_trained_from_scratch = \
-        script_train_lightweight_unet_from_scratch(name="lw_unet-trained_from_scratch", seed=1,
-                                                   train_val_split_ratio=0.8)
+    # log_df_lw_unet_trained_from_scratch = \
+    #     script_train_lightweight_unet_from_scratch(name="lw_unet-trained_from_scratch", seed=1,
+    #                                                train_val_split_ratio=0.8)
+
     pass

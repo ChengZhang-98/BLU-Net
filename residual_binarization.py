@@ -259,6 +259,63 @@ def transfer_unet_weights_to_binary_unet(unet, binary_unet):
     return binary_unet
 
 
+def transfer_lightweight_unet_weights_to_binary_lightweight_unet(lightweight_unet, binary_lightweight_unet):
+    list_of_tf_param_np_weight_tuples = []
+    for blw_unet_layer in tqdm(binary_lightweight_unet.layers):
+        blw_unet_layer_name = blw_unet_layer.name
+
+        if "Conv" not in blw_unet_layer_name:
+            continue
+
+        if "BinaryConv" in blw_unet_layer_name:
+            link_to_target_kernel = blw_unet_layer.kernel
+            link_to_target_bias = blw_unet_layer.bias
+            corresponding_conv_layer_in_lw_unet = blw_unet_layer_name.replace("BinaryConv", "Conv")
+        else:
+            link_to_target_depthwise_kernel = blw_unet_layer.depthwise_kernel
+            link_to_target_pointwise_kernel = blw_unet_layer.pointwise_kernel
+            link_to_target_bias = blw_unet_layer.bias
+            corresponding_conv_layer_in_lw_unet = \
+                blw_unet_layer_name.replace("BinaryLightweight", "Lightweight").replace("BinarySeparableConv",
+                                                                                        "SeparableConv")
+
+        layer_found = False
+        for lw_unet_layer in lightweight_unet.layers:
+            if lw_unet_layer.name == corresponding_conv_layer_in_lw_unet:
+                if "BinaryConv" in blw_unet_layer_name:
+                    np_source_kernel = lw_unet_layer.kernel.numpy()
+                    np_source_bias = lw_unet_layer.bias.numpy()
+                    assert link_to_target_kernel.shape == np_source_kernel.shape, \
+                        "unmatched kernel size between {} and {}".format(lw_unet_layer.name, blw_unet_layer.name)
+                    assert link_to_target_bias.shape == np_source_bias.shape, \
+                        "unmatched bias size between {} and {}".format(lw_unet_layer.name, blw_unet_layer.name)
+                    layer_found = True
+                    list_of_tf_param_np_weight_tuples.append((link_to_target_kernel, np_source_kernel))
+                    list_of_tf_param_np_weight_tuples.append((link_to_target_bias, np_source_bias))
+                else:
+                    np_source_depthwise_kernel = lw_unet_layer.depthwise_kernel
+                    np_source_pointwise_kernel = lw_unet_layer.pointwise_kernel
+                    np_source_bias = lw_unet_layer.bias
+
+                    assert link_to_target_depthwise_kernel.shape == np_source_depthwise_kernel.shape, \
+                        "unmatched depthwise kernel size between {} and {}".format(blw_unet_layer.name, lw_unet_layer.name)
+                    assert link_to_target_pointwise_kernel.shape == np_source_pointwise_kernel.shape, \
+                        "unmatched pointwise kernel size between {} and {}".format(blw_unet_layer.name, lw_unet_layer.name)
+                    assert link_to_target_bias.shape == np_source_bias.shape, \
+                        "unmatched bias size between {} and {}".format(blw_unet_layer.name, lw_unet_layer.name)
+
+                    layer_found = True
+                    list_of_tf_param_np_weight_tuples.append((link_to_target_depthwise_kernel, np_source_depthwise_kernel))
+                    list_of_tf_param_np_weight_tuples.append((link_to_target_pointwise_kernel, np_source_pointwise_kernel))
+                    list_of_tf_param_np_weight_tuples.append((link_to_target_bias, np_source_bias))
+
+        if not layer_found:
+            raise RuntimeError("Failed to find matched layer for {}".format(blw_unet_layer.name))
+
+    keras.backend.batch_set_value(list_of_tf_param_np_weight_tuples)
+    return binary_lightweight_unet
+
+
 if __name__ == '__main__':
     tf.keras.backend.clear_session()
     x = tf.ones(shape=(2, 16, 16, 1))

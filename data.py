@@ -389,7 +389,7 @@ def calculate_and_save_weight_maps(mask_dir, weight_map_dir, sample_size=None):
     for mask_path in tqdm(mask_path_list):
         weight_map_name = os.path.splitext(os.path.basename(mask_path))[0].replace("mask", "weights") + ".npy"
         weight_map_path = os.path.join(weight_map_dir, weight_map_name)
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)/255.0
         weight_map = _get_seg_weights(mask, class_weights=(class_weight_1, class_weight_2))
         # weight_map = np.expand_dims(weight_map, axis=-1)
 
@@ -427,7 +427,8 @@ def postprocess_a_mask(pred_mask, binarize_threshold=0.5, remove_min_size=20):
     :return:
     """
     pred_mask = (pred_mask >= binarize_threshold).astype(bool)
-    pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
+    if remove_min_size is not None:
+        pred_mask = morph.remove_small_objects(pred_mask, min_size=remove_min_size, connectivity=1)
 
     return pred_mask
 
@@ -463,8 +464,8 @@ if __name__ == '__main__':
     target_size = (512, 512)
 
     bool_calculate_and_save_weight_maps = False
-    bool_data_generator_test = True
-    bool_do_statistic_on_image_sizes = False
+    bool_data_generator_test = False
+    bool_do_statistic_on_image_sizes = True
 
     # Data preprocessing
     # calculate and save weight map files
