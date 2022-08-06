@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 from keras import metrics, initializers
 from keras import layers
+from keras import regularizers
 from keras.losses import BinaryCrossentropy
 from keras.metrics import BinaryAccuracy, BinaryIoU, OneHotIoU, IoU
 from keras.models import Model
@@ -17,7 +18,8 @@ from training_utils import CustomBinaryIoU
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
-def _get_contracting_block(input_layer, conv2d_layer, filters, conv2d_params, dropout=0, name="Contracting"):
+def _get_contracting_block(input_layer, conv2d_layer, filters, conv2d_params, dropout=0, name="Contracting",
+                           regularizer_factor=0):
     if conv2d_layer is layers.Conv2D:
         conv_name = "_Conv2D"
     elif conv2d_layer is layers.SeparableConv2D:
@@ -26,8 +28,10 @@ def _get_contracting_block(input_layer, conv2d_layer, filters, conv2d_params, dr
         conv_name = "UnknownConv2D"
 
     pool = layers.MaxPooling2D(pool_size=(2, 2), name=name + "_MaxPooling2D")(input_layer)
-    conv1 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_1")(pool)
-    conv2 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_2")(conv1)
+    conv1 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_1",
+                         kernel_regularizer=regularizers.L2(regularizer_factor))(pool)
+    conv2 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_2",
+                         kernel_regularizer=regularizers.L2(regularizer_factor))(conv1)
 
     if dropout == 0:
         return conv2
@@ -35,7 +39,8 @@ def _get_contracting_block(input_layer, conv2d_layer, filters, conv2d_params, dr
         return layers.Dropout(rate=dropout, name=name + "_Dropout")(conv2)
 
 
-def _get_expanding_block(input_layer, skip_layer, conv2d_layer, filters, conv2d_params, dropout=0, name="Expanding"):
+def _get_expanding_block(input_layer, skip_layer, conv2d_layer, filters, conv2d_params, dropout=0, name="Expanding",
+                         regularizer_factor=0):
     if conv2d_layer is layers.Conv2D:
         conv_name = "_Conv2D"
     elif conv2d_layer is layers.SeparableConv2D:
@@ -43,10 +48,13 @@ def _get_expanding_block(input_layer, skip_layer, conv2d_layer, filters, conv2d_
     else:
         conv_name = "UnknownConv2D"
     up = layers.UpSampling2D(size=(2, 2), name=name + "_UpSampling2D")(input_layer)
-    conv1 = conv2d_layer(filters, 2, **conv2d_params, name=name + conv_name + "_1")(up)
+    conv1 = conv2d_layer(filters, 2, **conv2d_params, name=name + conv_name + "_1",
+                         kernel_regularizer=regularizers.L2(regularizer_factor))(up)
     merge = layers.Concatenate(axis=3, name=name + "_Concatenate")([skip_layer, conv1])
-    conv2 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_2")(merge)
-    conv3 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_3")(conv2)
+    conv2 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_2",
+                         kernel_regularizer=regularizers.L2(regularizer_factor))(merge)
+    conv3 = conv2d_layer(filters, 3, **conv2d_params, name=name + conv_name + "_3",
+                         kernel_regularizer=regularizers.L2(regularizer_factor))(conv2)
 
     if dropout == 0:
         return conv3
@@ -54,7 +62,7 @@ def _get_expanding_block(input_layer, skip_layer, conv2d_layer, filters, conv2d_
         return layers.Dropout(rate=dropout, name=name + "_Dropout")(conv3)
 
 
-def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0, num_levels=5):
+def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0, num_levels=5, regularizer_factor=0):
     conv2d_parameters = {
         "activation": "relu",
         "padding": "same",
@@ -76,7 +84,8 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
                                    conv2d_layer=layers.Conv2D,
                                    conv2d_params=conv2d_parameters,
                                    dropout=dropout,
-                                   name="Level{}_Contracting".format(level)
+                                   name="Level{}_Contracting".format(level),
+                                   regularizer_factor=regularizer_factor
                                    )
         )
 
@@ -90,7 +99,8 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
                                                 conv2d_layer=layers.Conv2D,
                                                 conv2d_params=conv2d_parameters,
                                                 dropout=dropout,
-                                                name="Level{}_Expanding".format(level))
+                                                name="Level{}_Expanding".format(level),
+                                                regularizer_factor=regularizer_factor)
 
     output = layers.Conv2D(output_classes, 1, activation=final_activation, name="output")(expanding_output)
 
@@ -99,9 +109,10 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
     return unet_model
 
 
-def get_compiled_unet(input_size, num_levels, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4):
+def get_compiled_unet(input_size, num_levels, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4,
+                      regularizer_factor=0):
     unet_model = get_uncompiled_unet(input_size, final_activation=final_activation, output_classes=1, dropout=0,
-                                     num_levels=num_levels)
+                                     num_levels=num_levels, regularizer_factor=regularizer_factor)
     bce_loss_from_logits = final_activation != "sigmoid"
     unet_model.compile(optimizer=Adam(learning_rate=learning_rate),
                        loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),

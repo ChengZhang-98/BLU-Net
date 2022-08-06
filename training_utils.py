@@ -7,7 +7,7 @@ import tensorflow as tf
 from keras import callbacks
 from tqdm import tqdm
 
-from data import DataGenerator, postprocess_a_mask_batch
+from data import DataGenerator, postprocess_a_mask_batch, _get_matched_data_df
 
 
 def _callback_util_get_image_description(image_path_series: pd.Series):
@@ -70,10 +70,67 @@ def get_validation_plot_callback(model, validation_set, batch_index_list_to_plot
     return validation_plot_callback
 
 
+def _train_val_test_df_split(dataset_name,
+                             image_dir, image_type, mask_dir, mask_type, weight_map_dir, weight_map_type,
+                             num_train_samples, num_folds, fold_index, seed):
+    assert num_folds > fold_index >= 0, "fold_index fails to meet: 0 <= fold_index < {}".format(num_folds)
+
+    data_df = _get_matched_data_df(image_dir=image_dir,
+                                   image_type=image_type,
+                                   mask_dir=mask_dir,
+                                   mask_type=mask_type,
+                                   weight_map_dir=weight_map_dir,
+                                   weight_map_type=weight_map_type,
+                                   dataset_name=dataset_name)
+
+    data_df = data_df.sample(frac=1, random_state=44).reset_index(drop=True)
+
+    train_val_df = data_df.iloc[:num_train_samples, :].sample(frac=1, random_state=seed).reset_index(drop=True)
+    test_df = data_df.iloc[num_train_samples:].reset_index(drop=True)
+
+    fold_index_list = np.split(np.arange(num_train_samples), num_folds)
+    val_df_indices = fold_index_list.pop(fold_index)
+    train_df_indices = np.concatenate(fold_index_list)
+    val_df = train_val_df.iloc[val_df_indices, :].copy()
+    train_df = train_val_df.iloc[train_df_indices, :].copy()
+    val_df.loc[:, "fold"] = fold_index
+    train_df.loc[:, "fold"] = fold_index
+
+    return train_df, val_df, test_df
+
+
+def train_val_test_split(batch_size, dataset_name, use_weight_map,
+                         image_dir, image_type, mask_dir, mask_type, weight_map_dir, weight_map_type,
+                         target_size, data_aug_transform, seed, num_folds=5, fold_index=1):
+    train_df, val_df, test_df = _train_val_test_df_split(
+        dataset_name=dataset_name,
+        image_dir=image_dir, image_type=image_type, mask_dir=mask_dir, mask_type=mask_type,
+        weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
+        num_train_samples=30, num_folds=num_folds, fold_index=fold_index, seed=seed)
+
+    train_data_gen = DataGenerator.build_from_dataframe(
+        dataframe=train_df, batch_size=batch_size, dataset_name=dataset_name,
+        mode="train", use_weight_map=use_weight_map, target_size=target_size, data_aug_transform=data_aug_transform,
+        seed=None)
+
+    val_data_gen = DataGenerator.build_from_dataframe(
+        dataframe=val_df, batch_size=batch_size, dataset_name=dataset_name,
+        mode="validate", use_weight_map=use_weight_map, target_size=target_size, data_aug_transform=None,
+        seed=None)
+
+    test_data_gen = DataGenerator.build_from_dataframe(
+        dataframe=test_df, batch_size=batch_size, dataset_name=dataset_name,
+        mode="test", use_weight_map=use_weight_map, target_size=target_size, data_aug_transform=None,
+        seed=None)
+
+    return train_data_gen, val_data_gen, test_data_gen
+
+
 def train_val_split(data_gen: DataGenerator, train_ratio: float, validation_batch_size=2, use_weight_map_val=False):
     sample_for_train = int(train_ratio * len(data_gen.data_df))
     data_gen_val = DataGenerator.build_from_dataframe(data_gen.data_df.iloc[sample_for_train:, :],
                                                       batch_size=validation_batch_size,
+                                                      dataset_name=None,
                                                       mode="validate",
                                                       use_weight_map=use_weight_map_val,
                                                       target_size=data_gen.target_size,
@@ -94,8 +151,13 @@ def get_lr_scheduler(start_epoch=1):
 
 
 def evaluate_model_on_a_dataset(model, dataset, metric_list, postprocessing=True):
-    for batch_index, (image_batch, mask_batch) in tqdm(enumerate(dataset)):
+    for batch_index, *double_or_triple in tqdm(enumerate(dataset)):
+        if dataset.use_weight_map:
+            image_batch, mask_batch, weight_map_batch = double_or_triple
+        else:
+            image_batch, mask_batch = double_or_triple
         pred_mask_batch = model(image_batch, training=False)
+
         if postprocessing:
             pred_mask_batch = postprocess_a_mask_batch(pred_mask_batch, binarize_threshold=0.5, remove_min_size=20)
         for metric in metric_list:
@@ -143,6 +205,7 @@ class CustomBinaryIoU(tf.keras.metrics.Metric):
 
 def append_info_to_notes(notes=None, **kwargs):
     lines = ["{} = {}".format(k, w) for k, w in kwargs.items()]
+    lines = ["-"*20] + lines + ["-"*20]
     return notes + "\n" + "\n".join(lines)
 
 
@@ -170,18 +233,8 @@ if __name__ == '__main__':
     start_epoch = 0
     end_epoch = 15
 
-    unet = get_compiled_unet(input_size=(*target_size, 1),
-                             num_levels=5,
-                             pretrained_weights=pretrained_weight_path,
-                             learning_rate=1e-4)
-    data_gen_train = DataGenerator(batch_size=batch_size, dataset_name=dataset, mode="train", use_weight_map=True,
-                                   image_dir=image_dir, image_type=image_type,
-                                   mask_dir=mask_dir, mask_type=mask_type,
-                                   weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-                                   target_size=target_size, data_aug_transform=None, seed=seed)
-    print("Evaluation started...")
-    _, data_gen_val = train_val_split(data_gen_train, 0.8, validation_batch_size=2)
-
-    metric_list = [keras.metrics.BinaryAccuracy(name="binary_accuracy", threshold=0.5),
-                   keras.metrics.BinaryIoU(target_class_ids=[1], threshold=0.5, name="binary_IoU", )]
-    evaluate_model_on_a_dataset(model=unet, dataset=data_gen_val, metric_list=metric_list)
+    train_df, val_df, test_df = _train_val_test_df_split(
+        dataset_name="DIC", image_dir=image_dir, image_type=image_type, mask_dir=mask_dir, mask_type=mask_type,
+        weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
+        num_train_samples=30, num_folds=5, fold_index=0, seed=1
+    )

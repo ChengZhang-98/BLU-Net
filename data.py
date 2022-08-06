@@ -16,7 +16,7 @@ from tqdm import tqdm
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
-def _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_dir, weight_map_type, dataset):
+def _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_dir, weight_map_type, dataset_name):
     image_df = pd.DataFrame({"image": glob.glob(os.path.join(image_dir, "*." + image_type.lower()))})
     image_df.loc[:, "id"] = image_df.loc[:, "image"].apply(lambda x: os.path.splitext(os.path.basename(x))[0])
 
@@ -25,7 +25,7 @@ def _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_
         matched_df = image_df.copy()
     else:
         mask_df = pd.DataFrame({"mask": glob.glob(os.path.join(mask_dir, "*." + mask_type.lower()))})
-        if dataset.lower() == "training_2d":
+        if dataset_name.lower() == "training_2d":
             mask_df.loc[:, "id"] = mask_df.loc[:, "mask"].apply(lambda x: os.path.splitext(os.path.basename(x))[0])
         else:
             mask_df.loc[:, "id"] = mask_df.loc[:, "mask"].apply(lambda x: os.path.splitext(os.path.basename(x))[0][:-5])
@@ -37,7 +37,7 @@ def _get_matched_data_df(image_dir, image_type, mask_dir, mask_type, weight_map_
     else:
         weight_map_df = pd.DataFrame(
             {"weight_map": glob.glob(os.path.join(weight_map_dir, "*." + weight_map_type.lower()))})
-        if dataset.lower() == "training_2d":
+        if dataset_name.lower() == "training_2d":
             weight_map_df.loc[:, "id"] = weight_map_df.loc[:, "weight_map"].apply(
                 lambda x: os.path.splitext(os.path.basename(x))[0]
             )
@@ -152,7 +152,10 @@ def _reduce_size_before_resize(image, mask, weight_map, target_size):
 
 
 class DataGenerator(Sequence):
-    def __init__(self, batch_size, dataset_name, mode, use_weight_map,
+    def __init__(self, batch_size,
+                 dataset_name,
+                 mode,
+                 use_weight_map,
                  image_dir,
                  image_type,
                  mask_dir,
@@ -185,8 +188,16 @@ class DataGenerator(Sequence):
                 self.data_df = self.data_df.sample(frac=1, random_state=self.seed, ignore_index=True)
 
     @classmethod
-    def build_from_dataframe(cls, dataframe, batch_size, mode, use_weight_map, target_size, data_aug_transform, seed):
-        data_gen = cls(batch_size, dataset_name=None, mode=mode, use_weight_map=use_weight_map,
+    def build_from_dataframe(cls, dataframe,
+                             batch_size,
+                             dataset_name,
+                             mode,
+                             use_weight_map,
+                             target_size,
+                             data_aug_transform,
+                             seed):
+
+        data_gen = cls(batch_size, dataset_name=dataset_name, mode=mode, use_weight_map=use_weight_map,
                        image_dir=None, image_type=None,
                        mask_dir=None, mask_type=None,
                        weight_map_dir=None, weight_map_type=None,
@@ -396,22 +407,6 @@ def calculate_and_save_weight_maps(mask_dir, weight_map_dir, sample_size=None):
         np.save(weight_map_path, weight_map)
 
 
-def do_statistic_on_image_size(image_dir, image_type):
-    h_list = []
-    w_list = []
-    image_path_list = glob.glob(os.path.join(image_dir, "*." + image_type.lower()))
-    assert len(image_path_list) != 0, "No {} files in this directory {}".format(image_type, image_dir)
-
-    for image_path in tqdm(image_path_list):
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        h_list.append(image.shape[0])
-        w_list.append(image.shape[1])
-
-    statistic_df = pd.DataFrame(dict(image=image_path_list, height=h_list, width=w_list))
-    print(statistic_df.describe())
-    return statistic_df
-
-
 def _binarize_mask(pred_mask):
     threshold = (np.amin(pred_mask) + np.amax(pred_mask)) / 2
     return np.array(pred_mask > threshold, dtype=bool)
@@ -463,9 +458,8 @@ if __name__ == '__main__':
 
     target_size = (512, 512)
 
-    bool_calculate_and_save_weight_maps = False
+    bool_calculate_and_save_weight_maps = True
     bool_data_generator_test = False
-    bool_do_statistic_on_image_sizes = True
 
     # Data preprocessing
     # calculate and save weight map files
@@ -494,18 +488,3 @@ if __name__ == '__main__':
             ax[1].imshow(mask, cmap="gray", vmin=0, vmax=1)
             ax[2].imshow(weight_map)
             f.show()
-
-    if bool_do_statistic_on_image_sizes:
-        """
-        *: training_2d
-                height        width
-        count   307.000000   307.000000
-        mean   1114.462541  1192.970684
-        std     652.918787   612.352724
-        min     420.000000   350.000000
-        25%     520.000000   696.000000
-        50%     760.000000   816.000000
-        75%    2048.000000  2048.000000
-        max    2048.000000  2048.000000
-        """
-        static_df = do_statistic_on_image_size(image_dir, image_type)
