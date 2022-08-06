@@ -109,7 +109,7 @@ def get_uncompiled_unet(input_size, final_activation, output_classes, dropout=0,
     return unet_model
 
 
-def get_compiled_unet(input_size, num_levels, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4,
+def get_compiled_unet(input_size, num_levels=5, final_activation="sigmoid", pretrained_weights=None, learning_rate=1e-4,
                       regularizer_factor=0):
     unet_model = get_uncompiled_unet(input_size, final_activation=final_activation, output_classes=1, dropout=0,
                                      num_levels=num_levels, regularizer_factor=regularizer_factor)
@@ -307,7 +307,7 @@ def get_uncompiled_binary_lightweight_unet(input_size,
                                            num_conv_residual_levels,
                                            num_residual_levels_depthwise_filter,
                                            num_residual_levels_pointwise_filter,
-                                           output_classes,
+                                           output_classes=1,
                                            num_levels=5,
                                            conv_kernel_initializer_seed=1):
     inputs = layers.Input(input_size, name="input")

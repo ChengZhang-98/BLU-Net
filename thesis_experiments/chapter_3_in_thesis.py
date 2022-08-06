@@ -14,7 +14,8 @@ from data import DataGenerator
 
 from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, RandomRotate,
                                RandomZoomAndShift, DataAugmentation, RandomRot90)
-from training_utils import get_validation_plot_callback, train_val_test_split, get_lr_scheduler, append_info_to_notes
+from training_utils import (get_validation_plot_callback, train_val_test_split, get_lr_scheduler, append_info_to_notes,
+                            get_sleep_callback, CustomModelCheckpointCallBack)
 
 
 def script_func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1, use_weight_map=False, seed=1,
@@ -42,23 +43,32 @@ def script_func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1,
     return train_set, val_set, test_set
 
 
-def script_func_get_callback_list(checkpoint_filepath, start_epoch, end_epoch, logdir, model, val_set, ):
-    model_checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath,
-                                                                save_weights_only=True,
-                                                                verbosde=1,
-                                                                monitor='val_binary_IoU',
-                                                                mode='max',
-                                                                save_best_only=True)
+def script_func_get_callback_list(checkpoint_filepath, start_epoch, end_epoch, logdir, model, val_set):
+    callback_list = []
+    # model_checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath,
+    #                                                             save_weights_only=True,
+    #                                                             verbose=1,
+    #                                                             monitor='val_binary_IoU',
+    #                                                             mode='max',
+    #                                                             save_best_only=True)
+    model_checkpoint_callback = CustomModelCheckpointCallBack(
+        ignore=40, filepath=checkpoint_filepath, monitor="val_loss", mode="min",
+        checkpoint_log_dir=os.path.join(logdir, "checkpoint_info.txt"))
+    callback_list.append(model_checkpoint_callback)
+
     lr_scheduler_callback = keras.callbacks.LearningRateScheduler(
         get_lr_scheduler((start_epoch + end_epoch) // 2))
+    callback_list.append(lr_scheduler_callback)
+
+    tensorboard_callback = callbacks.TensorBoard(log_dir=logdir)
+    callback_list.append(tensorboard_callback)
 
     tensorboard_val_image_writer = tf.summary.create_file_writer(logdir + "/val_image")
-    tensorboard_callback = callbacks.TensorBoard(log_dir=logdir)
     validation_plot_callback = get_validation_plot_callback(model, val_set, [0, 1, 2, 3],
                                                             tensorboard_val_image_writer, max_output=4)
+    callback_list.append(validation_plot_callback)
 
-    callback_list = [tensorboard_callback, validation_plot_callback,
-                     model_checkpoint_callback, lr_scheduler_callback]
+    callback_list.append(get_sleep_callback(300, 50))
 
     return callback_list
 
@@ -84,11 +94,12 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index=0, seed=1
     use_weight_map = False
     pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/" \
                              "unet_agarpads_seg_evaluation2.hdf5"
-    learning_rate = 1e-3
-    regularizer_factor = 0.001
+    learning_rate = 1e-4
+    regularizer_factor = 1e-7
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
-    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/vanilla_unet-fine-tuned.h5"
+    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
+                          "vanilla_unet-fine_tuned-fold_{}.h5".format(fold_index)
     start_epoch = 0
     end_epoch = 400
 
@@ -139,5 +150,5 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index=0, seed=1
 
 if __name__ == '__main__':
     note_1 = \
-        "fine tune a standard unet with the weights from Delta 2.0\n"
+        "fine tune a vanilla unet with the weights from Delta 2.0\n"
     script_fine_tune_vanilla_unet_with_l2_regularizer(name="fine_tune_vanilla_unet_with_l2", fold_index=0, notes=note_1)

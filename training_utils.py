@@ -1,4 +1,6 @@
+import operator
 import os
+import time
 from collections.abc import Iterable
 
 import numpy as np
@@ -91,8 +93,8 @@ def _train_val_test_df_split(dataset_name,
     fold_index_list = np.split(np.arange(num_train_samples), num_folds)
     val_df_indices = fold_index_list.pop(fold_index)
     train_df_indices = np.concatenate(fold_index_list)
-    val_df = train_val_df.iloc[val_df_indices, :].copy()
-    train_df = train_val_df.iloc[train_df_indices, :].copy()
+    val_df = train_val_df.iloc[val_df_indices, :].copy().reset_index(drop=True)
+    train_df = train_val_df.iloc[train_df_indices, :].copy().reset_index(drop=True)
     val_df.loc[:, "fold"] = fold_index
     train_df.loc[:, "fold"] = fold_index
 
@@ -205,8 +207,49 @@ class CustomBinaryIoU(tf.keras.metrics.Metric):
 
 def append_info_to_notes(notes=None, **kwargs):
     lines = ["{} = {}".format(k, w) for k, w in kwargs.items()]
-    lines = ["-"*20] + lines + ["-"*20]
+    lines = ["-" * 20] + lines + ["-" * 20]
     return notes + "\n" + "\n".join(lines)
+
+
+def get_sleep_callback(sleep_length=300, per_epoch=50):
+    def take_a_break(epoch, logs):
+        if epoch != 0 and epoch % per_epoch == 0:
+            time.sleep(sleep_length)
+
+    return callbacks.LambdaCallback(on_epoch_end=take_a_break)
+
+
+class CustomModelCheckpointCallBack(callbacks.Callback):
+    def __init__(self, ignore, filepath, monitor, mode, checkpoint_log_dir=None):
+        super(CustomModelCheckpointCallBack, self).__init__()
+        self.ignore = ignore
+        self.filepath = filepath
+        self.monitor = monitor
+        assert mode in ["max", "min"], "parameter `mode` must be either 'max' or 'min'"
+        if mode == "max":
+            self.compare_current_with_best = operator.ge
+        else:
+            self.compare_current_with_best = operator.lt
+        self.checkpoint_log_dir = checkpoint_log_dir
+        self.best = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch == 0:
+            self.best = logs[self.monitor]
+        elif epoch < self.ignore:
+            if self.compare_current_with_best(logs[self.monitor], self.best):
+                self.best = logs[self.monitor]
+        else:
+            if self.compare_current_with_best(logs[self.monitor], self.best):
+                self.best = logs[self.monitor]
+                self.model.save_weights(self.filepath, overwrite=True, save_format="h5", options=None)
+                with open(self.checkpoint_log_dir, "w+") as f:
+                    info = "epoch = {}, best {} = {}, model saved to {}".format(epoch, self.monitor, self.best,
+                                                                                self.filepath)
+                    f.write(info)
+
+    def on_train_end(self, logs=None):
+        self.model.save_weights(self.filepath.replace(".h5", "-end_epoch.h5"), overwrite=True, save_format='h5')
 
 
 if __name__ == '__main__':
