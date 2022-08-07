@@ -3,6 +3,7 @@ import os
 import keras.backend
 import numpy as np
 import tensorflow as tf
+import tensorflow_model_optimization as tfmot
 from keras import metrics, initializers
 from keras import layers
 from keras import regularizers
@@ -400,10 +401,89 @@ def get_compiled_binary_lightweight_unet(input_size,
     return binary_lightweight_unet
 
 
+# todo: untested
+
+def get_compiled_unet_to_be_pruned(input_size, prune_initial_sparsity, prune_final_sparsity,
+                                   prune_begin_step, prune_end_step,
+                                   pretrained_weights,
+                                   num_levels=5, final_activation="sigmoid",
+                                   learning_rate=1e-4, regularizer_factor=0):
+    unet = get_uncompiled_unet(input_size=input_size, final_activation=final_activation,
+                               output_classes=1, dropout=0, num_levels=num_levels, regularizer_factor=0)
+    unet.load_weights(filepath=pretrained_weights)
+
+    pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(initial_sparsity=prune_initial_sparsity,
+                                                            final_sparsity=prune_final_sparsity,
+                                                            begin_step=prune_begin_step,
+                                                            end_step=prune_end_step)
+    unet = tfmot.sparsity.keras.prune_low_magnitude(unet, pruning_schedule=pruning_schedule)
+    unet.compile(optimizer=Adam(learning_rate=learning_rate),
+                 loss=BinaryCrossentropy(name="weighted_binary_crossentropy",
+                                         from_logits=final_activation != "sigmoid"),
+                 metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
+                          BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
+
+    return unet
+
+
+# todo: untested
+def get_uncompiled_unet_encoder_decoder(input_size, final_activation, output_classes, dropout=0, num_levels=5,
+                                        regularizer_factor=0):
+    conv2d_parameters = {
+        "activation": "relu",
+        "padding": "same",
+        "kernel_initializer": "he_normal",
+    }
+    inputs = layers.Input(input_size, name="input")
+    filters = 64
+
+    conv = layers.Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_1")(inputs)
+    conv = layers.Conv2D(filters, 3, **conv2d_parameters, name="Level0_Conv2D_2")(conv)
+
+    level = 0
+    contracting_outputs = [conv]
+    for level in range(1, num_levels):
+        filters *= 2
+        contracting_outputs.append(
+            _get_contracting_block(input_layer=contracting_outputs[-1],
+                                   filters=filters,
+                                   conv2d_layer=layers.Conv2D,
+                                   conv2d_params=conv2d_parameters,
+                                   dropout=dropout,
+                                   name="Level{}_Contracting".format(level),
+                                   regularizer_factor=regularizer_factor
+                                   )
+        )
+
+    expanding_output = contracting_outputs.pop()
+    # *: encoder
+    code = expanding_output
+    unet_encoder = Model(inputs=inputs, outputs=code, name="unet-encoder")
+
+    while level > 0:
+        level -= 1
+        filters = int(filters / 2)
+        expanding_output = _get_expanding_block(input_layer=expanding_output,
+                                                skip_layer=contracting_outputs.pop(),
+                                                filters=filters,
+                                                conv2d_layer=layers.Conv2D,
+                                                conv2d_params=conv2d_parameters,
+                                                dropout=dropout,
+                                                name="Level{}_Expanding".format(level),
+                                                regularizer_factor=regularizer_factor)
+
+    output = layers.Conv2D(output_classes, 1, activation=final_activation, name="output")(expanding_output)
+
+    # decoder
+    unet_decoder = Model(inputs=code, outputs=output, name="unet-decoder")
+
+    return unet_encoder, unet_decoder
+
+
 if __name__ == '__main__':
     # *: tensorboard --logdir="E:\ED_MS\Semester_3\Codes\MyProject\tensorboard_logs"
     seed = None
-    batch_size = 4
+    batch_size = 1
     target_size = (512, 512)
     weight_path = "./checkpoints/trained_weights/unet_agarpads_seg_evaluation2.hdf5"
 
@@ -416,21 +496,10 @@ if __name__ == '__main__':
     dataset = "DIC"
 
     x_rand = tf.random.uniform((batch_size, *target_size, 1))
-    lw_unet = get_compiled_lightweight_unet(input_size=(*target_size, 1), num_levels=5)
-    # y_lw_unet = lw_unet(x_rand, training=False)
-    # unet = get_compiled_unet(input_size=(*target_size, 1), num_levels=4)
-    # y_unet = unet(x_rand, training=False)
 
-    # unet = get_compiled_unet((*target_size, 1), num_levels=5)
-    # lightweight_unet = get_compiled_lightweight_unet((*target_size, 1), 5)
+    # todo: test unet encoder decoder for KD
+    unet_encoder, u_net_decoder = get_uncompiled_unet_encoder_decoder(
+        (*target_size, 1), "sigmoid", 1)
 
-    # binary_unet = get_compiled_binary_unet((*target_size, 1))
-
-    binary_lightweight_unet = get_compiled_binary_lightweight_unet((*target_size, 1))
-    # y_blw_unet = binary_lightweight_unet(x_rand, training=False)
-
-    from residual_binarization import transfer_lightweight_unet_weights_to_binary_lightweight_unet
-
-    binary_lightweight_unet = transfer_lightweight_unet_weights_to_binary_lightweight_unet(lw_unet,
-                                                                                           binary_lightweight_unet)
-    y_blw_unet = binary_lightweight_unet(x_rand, training=False)
+    z_code = unet_encoder.predict_on_batch(x_rand)
+    y = u_net_decoder.predict_on_batch(z_code)

@@ -232,8 +232,10 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
             self.compare_current_with_best = operator.lt
         self.checkpoint_log_dir = checkpoint_log_dir
         self.best = None
+        self.last = None
 
     def on_epoch_end(self, epoch, logs=None):
+        self.last = logs[self.monitor]
         if epoch == 0:
             self.best = logs[self.monitor]
         elif epoch < self.ignore:
@@ -250,6 +252,11 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
 
     def on_train_end(self, logs=None):
         self.model.save_weights(self.filepath.replace(".h5", "-end_epoch.h5"), overwrite=True, save_format='h5')
+        with open(self.checkpoint_log_dir, "a+") as f:
+            info = "training ended, last {} = {}, model saved to {}".format(self.monitor, self.last,
+                                                                            self.filepath.replace(".h5",
+                                                                                                  "-end_epoch.h5"))
+            f.write(info)
 
 
 if __name__ == '__main__':
@@ -279,5 +286,5 @@ if __name__ == '__main__':
     train_df, val_df, test_df = _train_val_test_df_split(
         dataset_name="DIC", image_dir=image_dir, image_type=image_type, mask_dir=mask_dir, mask_type=mask_type,
         weight_map_dir=weight_map_dir, weight_map_type=weight_map_type,
-        num_train_samples=30, num_folds=5, fold_index=0, seed=1
+        num_train_samples=30, num_folds=5, fold_index=1, seed=1
     )

@@ -68,7 +68,7 @@ def script_func_get_callback_list(checkpoint_filepath, start_epoch, end_epoch, l
                                                             tensorboard_val_image_writer, max_output=4)
     callback_list.append(validation_plot_callback)
 
-    callback_list.append(get_sleep_callback(300, 50))
+    callback_list.append(get_sleep_callback(120, 40))
 
     return callback_list
 
@@ -151,4 +151,5 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index=0, seed=1
 if __name__ == '__main__':
     note_1 = \
         "fine tune a vanilla unet with the weights from Delta 2.0\n"
-    script_fine_tune_vanilla_unet_with_l2_regularizer(name="fine_tune_vanilla_unet_with_l2", fold_index=0, notes=note_1)
+    df_1 = script_fine_tune_vanilla_unet_with_l2_regularizer(name="fine_tune_vanilla_unet_with_l2", fold_index=2,
+                                                             notes=note_1)
