@@ -151,6 +151,27 @@ def get_lr_scheduler(start_epoch=1):
     return lr_scheduler
 
 
+class CustomLRScheduler(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, initial_learning_rate, steps_per_epoch, epoch_start_to_decay):
+        self.current_lr = initial_learning_rate
+        self.current_epoch = 0
+        self.steps_per_epoch = steps_per_epoch
+        self.epoch_start_to_decay = epoch_start_to_decay
+
+    def __call__(self, step):
+        current_epoch = step // self.steps_per_epoch
+        if self.current_epoch < self.epoch_start_to_decay:
+            self.current_epoch = current_epoch
+            return self.current_lr
+        else:
+            if current_epoch > self.current_epoch:
+                self.current_lr = 0.95 * self.current_lr
+                self.current_epoch = current_epoch
+                return self.current_lr
+            else:
+                return self.current_lr
+
+
 def evaluate_on_test_set(model, test_set, postprocessing=False):
     iou_list = []
     f1score_list = []
@@ -179,6 +200,22 @@ def evaluate_on_test_set(model, test_set, postprocessing=False):
     return dict(binary_f1score=np.mean(f1score_list), binary_iou=np.mean(iou_list))
 
 
+def binarize_and_compute_iou(y_true, y_pred, threshold=0.5):
+    logical_y_true = y_true > threshold
+    logical_y_pred = y_pred > threshold
+
+    m11 = tf.logical_and(logical_y_true, logical_y_pred)
+    m10 = tf.logical_and(logical_y_true, tf.logical_not(logical_y_pred))
+    m01 = tf.logical_and(tf.logical_not(logical_y_true), logical_y_pred)
+
+    true_positives = tf.reduce_sum(tf.cast(m11, dtype=tf.float32), axis=(1, 2, 3))
+    false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
+    false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
+
+    mean_iou = tf.reduce_mean(true_positives / (true_positives + false_negatives + false_positives + 1e-7))
+    return mean_iou
+
+
 class CustomBinaryIoU(tf.keras.metrics.Metric):
     """
     threshold y_true and y_predict before calculating binary IoU
@@ -191,19 +228,7 @@ class CustomBinaryIoU(tf.keras.metrics.Metric):
         self.binary_iou = self.add_weight(name=name, initializer="zeros")
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        logical_y_true = y_true > self.threshold
-        logical_y_pred = y_pred > self.threshold
-
-        m11 = tf.logical_and(logical_y_true, logical_y_pred)
-        m10 = tf.logical_and(logical_y_true, tf.logical_not(logical_y_pred))
-        m01 = tf.logical_and(tf.logical_not(logical_y_true), logical_y_pred)
-
-        true_positives = tf.reduce_sum(tf.cast(m11, dtype=tf.float32), axis=(1, 2, 3))
-        false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
-        false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
-
-        mean_iou = tf.reduce_mean(true_positives / (true_positives + false_negatives + false_positives))
-
+        mean_iou = binarize_and_compute_iou(y_true, y_pred, self.threshold)
         self.binary_iou.assign(mean_iou)
 
     def reset_state(self):
@@ -230,7 +255,8 @@ class CustomBinaryF1Score(tf.keras.metrics.Metric):
         false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
         false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
 
-        mean_f1score = tf.reduce_mean(true_positives / (true_positives + 0.5 * (false_positives + false_negatives)))
+        mean_f1score = tf.reduce_mean(
+            true_positives / (1e-7 + true_positives + 0.5 * (false_positives + false_negatives)))
 
         self.binary_f1score.assign(mean_f1score)
 
@@ -256,7 +282,7 @@ def get_sleep_callback(sleep_length=300, per_epoch=50):
 
 
 class CustomModelCheckpointCallBack(callbacks.Callback):
-    def __init__(self, ignore, filepath, monitor, mode, checkpoint_log_dir=None):
+    def __init__(self, ignore, filepath, monitor, mode, logdir=None):
         super(CustomModelCheckpointCallBack, self).__init__()
         self.ignore = ignore
         self.filepath = filepath
@@ -266,12 +292,10 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
             self.compare_current_with_best = operator.ge
         else:
             self.compare_current_with_best = operator.lt
-        self.checkpoint_log_dir = checkpoint_log_dir
+        self.summary_writer = tf.summary.create_file_writer(logdir + "/train")
         self.best = None
         self.last = None
-
-        self.best_model_info = None
-        self.last_model_info = None
+        self.best_checkpoint = None
 
     def on_epoch_end(self, epoch, logs=None):
         self.last = logs[self.monitor]
@@ -284,24 +308,20 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
             if self.compare_current_with_best(logs[self.monitor], self.best):
                 self.best = logs[self.monitor]
                 self.model.save_weights(self.filepath, overwrite=True, save_format="h5", options=None)
-                # with open(self.checkpoint_log_dir, "w+") as f:
-                #     info = "epoch = {}, best {} = {}, model saved to {}\n\n".format(epoch, self.monitor, self.best,
-                #                                                                     self.filepath)
-                #     f.write(info)
-                self.best_model_info = "epoch = {}, best {} = {}, model saved to {}\n\n".format(epoch, self.monitor,
-                                                                                                self.best,
-                                                                                                self.filepath)
+                info = "epoch = {}, best {} = {}, model saved to {}\n\n".format(epoch, self.monitor,
+                                                                                self.best,
+                                                                                self.filepath)
+                self.best_checkpoint = info
 
     def on_train_end(self, logs=None):
         self.model.save_weights(self.filepath.replace(".h5", "-end_epoch.h5"), overwrite=True, save_format='h5')
         info = "training ended, last {} = {}, model saved to {}".format(self.monitor, self.last,
                                                                         self.filepath.replace(".h5",
                                                                                               "-end_epoch.h5"))
-        # with open(self.checkpoint_log_dir, "a+") as f:
-        #     f.write(info)
-        self.last_model_info = info
-        print(self.best_model_info)
-        print(self.last_model_info)
+
+        with self.summary_writer.as_default():
+            tf.summary.text("best_checkpoint", self.best_checkpoint, step=0)
+            tf.summary.text("last_checkpoint", info, step=0)
 
 
 if __name__ == '__main__':

@@ -1,29 +1,25 @@
 import os
 from datetime import datetime
 
-import keras.callbacks
-import tensorflow as tf
 import keras
-from keras import callbacks
+import keras.callbacks
 import pandas as pd
+import tensorflow as tf
+from keras import callbacks
 
-from data import DataGenerator
+from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, DataAugmentation, RandomRot90)
+from knowledge_distillation import KnowledgeDistillation, distill_knowledge
 from model import (get_compiled_unet, get_compiled_lightweight_unet,
-                   get_compiled_binary_unet, get_compiled_binary_lightweight_unet,
+                   get_compiled_binary_lightweight_unet,
                    get_teacher_vanilla_unet,
                    get_student_lightweight_unet)
-from data import DataGenerator
-
-from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, RandomRotate,
-                               RandomZoomAndShift, DataAugmentation, RandomRot90)
-from training_utils import (get_validation_plot_callback, train_val_test_split, get_lr_scheduler, append_info_to_notes,
-                            get_sleep_callback, CustomModelCheckpointCallBack)
-from knowledge_distillation import KnowledgeDistillation, distill_knowledge
 from residual_binarization import transfer_lightweight_unet_weights_to_binary_lightweight_unet
+from training_utils import (get_validation_plot_callback, train_val_test_split, get_lr_scheduler, append_info_to_notes,
+                            get_sleep_callback, CustomModelCheckpointCallBack, CustomLRScheduler)
 
 
-def script_func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1, use_weight_map=False, seed=1,
-                                           fold_index=0):
+def _func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1, use_weight_map=False, seed=1,
+                                     fold_index=0):
     image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
     image_type = "tif"
     mask_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Masks"
@@ -47,7 +43,7 @@ def script_func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1,
     return train_set, val_set, test_set
 
 
-def script_func_get_callback_list(checkpoint_filepath, monitor, mode, start_epoch, end_epoch, logdir, model, val_set):
+def _func_get_callback_list(checkpoint_filepath, monitor, mode, start_epoch, end_epoch, logdir, model, val_set):
     callback_list = []
     # model_checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath,
     #                                                             save_weights_only=True,
@@ -57,7 +53,7 @@ def script_func_get_callback_list(checkpoint_filepath, monitor, mode, start_epoc
     #                                                             save_best_only=True)
     model_checkpoint_callback = CustomModelCheckpointCallBack(
         ignore=40, filepath=checkpoint_filepath, monitor=monitor, mode=mode,
-        checkpoint_log_dir=os.path.join(logdir, "checkpoint_info.txt"))
+        logdir=logdir)
     callback_list.append(model_checkpoint_callback)
 
     lr_scheduler_callback = keras.callbacks.LearningRateScheduler(
@@ -77,8 +73,8 @@ def script_func_get_callback_list(checkpoint_filepath, monitor, mode, start_epoc
     return callback_list
 
 
-def script_func_print_training_info(name, seed, train_set, val_set, batch_size, use_weight_map, start_epoch,
-                                    end_epoch):
+def _func_print_training_info(name, seed, train_set, val_set, batch_size, use_weight_map, start_epoch,
+                              end_epoch):
     print(name)
     print("dataset seed = {}".format(seed))
     print("Training set contains {} samples\n"
@@ -101,13 +97,14 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index, notes, s
     learning_rate = 1e-4
     regularizer_factor = 1e-7
 
-    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
-    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
-                          "vanilla_unet-fine_tuned-fold_{}.h5".format(fold_index)
     start_epoch = 0
     end_epoch = 400
 
+    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}-fold_{}".format(name, fold_index))
+
+    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
+                          "vanilla_unet-fine_tuned-fold_{}.h5".format(fold_index)
 
     notes = append_info_to_notes(
         notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
@@ -115,20 +112,20 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index, notes, s
         regularizer_factor=regularizer_factor, checkpoint_filepath=checkpoint_filepath, start_epoch=start_epoch,
         end_epoch=end_epoch)
 
+    train_set, val_set, test_set = _func_get_train_val_test_dataset(
+        target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
+
     unet = get_compiled_unet(input_size=(*target_size, 1),
                              num_levels=5,
                              pretrained_weights=pretrained_weight_path,
                              learning_rate=learning_rate,
                              regularizer_factor=regularizer_factor)
 
-    train_set, val_set, test_set = script_func_get_train_val_test_dataset(
-        target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
-
-    callback_list = script_func_get_callback_list(
+    callback_list = _func_get_callback_list(
         checkpoint_filepath=checkpoint_filepath, monitor="val_loss", mode="min", start_epoch=start_epoch,
         end_epoch=end_epoch, logdir=logdir, model=unet, val_set=val_set)
 
-    script_func_print_training_info(
+    _func_print_training_info(
         name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
         use_weight_map=use_weight_map, start_epoch=start_epoch, end_epoch=end_epoch)
 
@@ -147,18 +144,19 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index, notes, s
     return log_df
 
 
-def train_lightweight_unet_via_knowledge_distillation(name, fold_index, notes, seed=1):
+def script_train_lightweight_unet_via_knowledge_distillation(name, fold_index, notes, seed=1):
     seed = seed
     batch_size = 1
-    target_size = (512, 512)
+    # *: input size
+    target_size = (256, 256)
     use_weight_map = False
 
     fine_tuned_unet_weight = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
                              "2022-08-06_fine_tune_vanilla_unet_with_l2-fold_0/" \
                              "vanilla_unet-fine-tuned_IoU=0.8880.h5"
-    # todo: knowledge distillation - maybe lambda code = 0.1?
-    lambda_code = 0
-    learning_rate = 1e-3
+    # *: hyper-parameter
+    learning_rate = 0.5e-2
+    features_to_extract = (2, 5, 8, 11, 14, 19, 24, 29, 34, 35)
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
@@ -170,35 +168,35 @@ def train_lightweight_unet_via_knowledge_distillation(name, fold_index, notes, s
     if not os.path.exists(logdir):
         os.mkdir(logdir)
 
-    teacher = get_teacher_vanilla_unet(input_size=(*target_size, 1), trained_weights=fine_tuned_unet_weight)
-    student = get_student_lightweight_unet(input_size=(*target_size, 1))
-    # todo: knowledge distillation - load weights
-    path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/" \
-           "lightweight_unet-trained_from_scratch_IoU=0.838.h5"
-    student.load_weights(filepath=path, by_name=True)
+    teacher = get_teacher_vanilla_unet(input_size=(*target_size, 1), trained_weights=fine_tuned_unet_weight,
+                                       features_to_extract=features_to_extract)
+    student = get_student_lightweight_unet(input_size=(*target_size, 1),
+                                           features_to_extract=features_to_extract)
 
     notes = append_info_to_notes(
         notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
         use_weight_map=use_weight_map, teacher_weight_path=fine_tuned_unet_weight, learning_rate=learning_rate,
         checkpoint_filepath=checkpoint_filepath, start_epoch=start_epoch, end_epoch=end_epoch)
 
-    knowledge_distillation = KnowledgeDistillation(name="knowledge_distillation", teacher=teacher, student=student)
-    knowledge_distillation.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-                                   code_loss_fn=tf.keras.losses.MeanAbsoluteError(name="code_loss"),
-                                   pred_loss_fn=tf.keras.losses.MeanAbsoluteError(name="pred_loss"),
-                                   lambda_code=lambda_code
-                                   )
-
-    train_set, val_set, test_set = script_func_get_train_val_test_dataset(
+    train_set, val_set, test_set = _func_get_train_val_test_dataset(
         target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
 
-    script_func_print_training_info(
+    knowledge_distillation = KnowledgeDistillation(name="knowledge_distillation", teacher=teacher, student=student)
+    knowledge_distillation.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=CustomLRScheduler(
+            initial_learning_rate=learning_rate,
+            steps_per_epoch=len(train_set) // batch_size,
+            epoch_start_to_decay=(end_epoch - start_epoch) // 2)),
+        loss_fn=tf.keras.losses.MeanAbsoluteError(name="loss")
+    )
+
+    _func_print_training_info(
         name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
         use_weight_map=use_weight_map, start_epoch=start_epoch, end_epoch=end_epoch)
 
     log_df = distill_knowledge(knowledge_distillation=knowledge_distillation, start_epoch=start_epoch,
                                end_epoch=end_epoch,
-                               train_set=train_set, val_set=val_set, checkpoint_path=checkpoint_filepath)
+                               train_set=train_set, val_set=val_set, checkpoint_path=checkpoint_filepath, logdir=logdir)
 
     print("Training finished")
 
@@ -208,6 +206,64 @@ def train_lightweight_unet_via_knowledge_distillation(name, fold_index, notes, s
     return log_df
 
 
+def script_train_lightweight_unet_after_knowledge_distillation(name, fold_index, notes, seed=1):
+    seed = seed
+    seed = seed
+    batch_size = 1
+    target_size = (512, 512)
+    learning_rate = 1e-3
+    use_weight_map = False
+    channel_multiplier = 1
+
+    pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                             "2022-08-08_knowledge_distillation-fold_0/" \
+                             "knowledge_distillation-lw_unet-fold_0.h5"
+
+    start_epoch = 0
+    end_epoch = 400
+
+    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
+    logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}-fold_{}".format(name, fold_index))
+
+    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
+                          "train_lw_unet_after_knowledge_distillation-fold_{}.h5".format(fold_index)
+    notes = append_info_to_notes(
+        notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
+        use_weight_map=use_weight_map, pretrained_weight_path=pretrained_weight_path, learning_rate=learning_rate,
+        checkpoint_filepath=checkpoint_filepath, start_epoch=start_epoch,
+        end_epoch=end_epoch)
+
+    train_set, val_set, test_set = _func_get_train_val_test_dataset(
+        target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
+
+    lw_unet = get_compiled_lightweight_unet(input_size=(*target_size, 1),
+                                            learning_rate=learning_rate)
+    lw_unet.load_weights(pretrained_weight_path, by_name=True)
+
+    callback_list = _func_get_callback_list(
+        checkpoint_filepath=checkpoint_filepath, monitor="val_binary_IoU", mode="max", start_epoch=start_epoch,
+        end_epoch=end_epoch, logdir=logdir, model=lw_unet, val_set=val_set)
+
+    _func_print_training_info(
+        name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
+        use_weight_map=use_weight_map, start_epoch=start_epoch, end_epoch=end_epoch)
+
+    history = lw_unet.fit(x=train_set, epochs=end_epoch, initial_epoch=start_epoch,
+                          validation_data=val_set, shuffle=False,
+                          validation_freq=1, callbacks=callback_list)
+
+    print("Training finished")
+
+    with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
+        f.write(notes)
+
+    log_df = pd.DataFrame(dict(epoch=history.epoch) | history.history)
+    log_df.to_pickle(os.path.join(logdir, "log_{}-fold_{}.pkl".format(name, fold_index)))
+    print("maximum val IoU = {:.4f}".format(log_df.loc[:, "val_binary_IoU"].max()))
+    return log_df
+
+
+# todo: untested
 def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
     seed = seed
     batch_size = 1
@@ -227,7 +283,7 @@ def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
     checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
                           "blu_unet-fold_{}.h5".format(fold_index)
     start_epoch = 0
-    end_epoch = 400
+    end_epoch = 20
 
     notes = append_info_to_notes(
         notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
@@ -254,14 +310,14 @@ def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
         lightweight_unet=lw_unet,
         binary_lightweight_unet=blu_net)
 
-    train_set, val_set, test_set = script_func_get_train_val_test_dataset(
+    train_set, val_set, test_set = _func_get_train_val_test_dataset(
         target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
 
-    callback_list = script_func_get_callback_list(
+    callback_list = _func_get_callback_list(
         checkpoint_filepath=checkpoint_filepath, monitor="val_binary_IoU", mode="max",
         start_epoch=start_epoch, end_epoch=end_epoch, logdir=logdir, model=blu_net, val_set=val_set)
 
-    script_func_print_training_info(
+    _func_print_training_info(
         name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
         use_weight_map=use_weight_map,
         start_epoch=start_epoch, end_epoch=end_epoch)
@@ -282,12 +338,29 @@ def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
 
 
 if __name__ == '__main__':
-    # *: fine tune a vanilla unet with regularizer
-    # note_1 = \
-    #     "fine tune a vanilla unet with the weights from Delta 2.0\n"
-    # df_4 = script_fine_tune_vanilla_unet_with_l2_regularizer(name="fine_tune_vanilla_unet_with_l2", fold_index=4,
-    #                                                          notes=note_1)
+    # todo list
+    # ! - [ ] Perform knowledge distillation - teacher-student on fold 1, 2, 3, 4
+    # ! - [ ] Perform knowledge distillation - continue training on fold 1, 2, 3, 4
+    # ! - [ ] Perform residual binarization on fold 0, 1, 2, 3, 4, 5
 
-    # knowledge distillation
-    log_df_kd = train_lightweight_unet_via_knowledge_distillation(name="knowledge_distillation", fold_index=0)
-    print("done")
+    # *: fine tune a vanilla unet with regularizer
+    # note = "fine tune a vanilla unet with the weights from Delta 2.0\n"
+    # log_df_unet = script_fine_tune_vanilla_unet_with_l2_regularizer(
+    #     name="fine_tune_vanilla_unet_with_l2", fold_index=4,
+    #     notes=note)
+
+    # *: knowledge distillation - teacher-student
+    # note = "train lightweight unet via knowledge distillation"
+    # log_df_kd = train_lightweight_unet_via_knowledge_distillation(name="knowledge_distillation",
+    #                                                               fold_index=0,
+    #                                                               notes=note)
+
+    # *: knowledge distillation - continue training
+    # *: fine tune lw_unet on the basis of knowledge distillation
+    notes = "continue training lw_unet after knowledge distillation"
+    log_df_lw_unet = script_train_lightweight_unet_after_knowledge_distillation(
+        name="train_lw_unet_after_knowledge_distillation",
+        fold_index=0,
+        notes=notes)
+
+    pass

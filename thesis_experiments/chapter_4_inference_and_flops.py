@@ -3,7 +3,7 @@ import os
 
 import tensorflow as tf
 
-from model import get_compiled_unet, get_uncompiled_unet
+from model import get_uncompiled_unet, get_uncompiled_lightweight_unet, get_uncompiled_binary_lightweight_unet
 
 
 def measure_inference_time_ns(input_size, model, repeat=100):
@@ -55,7 +55,19 @@ if __name__ == '__main__':
     # inference latency of unet = 0.0555 s, 18.01 FPS
     unet = get_uncompiled_unet(input_size)
     unet.compile()
-    inference_latency = measure_inference_time_ns(input_size, unet, 128)
-    flops = measure_flops(unet)
-    print("inference latency of unet = {:.4f} s, {:.2f} FPS".format(inference_latency / 1e9, 1e9/inference_latency))
-    print("U-Net computation throughput = {} M FLOPs".format(flops / 1e6))
+    inference_latency_unet = measure_inference_time_ns(input_size, unet, 128)
+    flops_unet = measure_flops(unet)
+
+    # *: lightweight unet
+    lw_unet = get_uncompiled_lightweight_unet(input_size=input_size, channel_multiplier=1)
+    lw_unet.compile()
+    inference_latency_lw_unet = measure_inference_time_ns(input_size, lw_unet, 128)
+    flops_lw_unet = measure_flops(lw_unet)
+
+    print("inference latency of vanilla unet = {:.4f} s, {:.2f} FPS".format(inference_latency_unet / 1e9,
+                                                                            1e9 / inference_latency_unet))
+    print("vanilla unet computation throughput = {} M FLOPs".format(flops_unet / 1e6))
+
+    print("inference latency of lw_unet = {:.4f} s, {:.2f} FPS".format(inference_latency_lw_unet / 1e9,
+                                                                       1e9 / inference_latency_lw_unet))
+    print("lw_unet computation throughput = {} M FLOPs".format(flops_lw_unet / 1e6))

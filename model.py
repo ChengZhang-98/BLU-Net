@@ -83,7 +83,8 @@ def _get_expanding_block(input_layer, skip_layer, conv2d_layer, filters, conv2d_
         return layers.Dropout(rate=dropout, name=name + "_Dropout")(conv3)
 
 
-def get_uncompiled_unet(input_size, final_activation="sigmoid", output_classes=1, dropout=0, num_levels=5, regularizer_factor=0):
+def get_uncompiled_unet(input_size, final_activation="sigmoid", output_classes=1, dropout=0, num_levels=5,
+                        regularizer_factor=0):
     conv2d_parameters = {
         "activation": "relu",
         "padding": "same",
@@ -147,7 +148,7 @@ def get_compiled_unet(input_size, num_levels=5, final_activation="sigmoid", pret
     return unet_model
 
 
-def get_uncompiled_lightweight_unet(input_size, final_activation, output_classes, dropout=0, num_levels=5,
+def get_uncompiled_lightweight_unet(input_size, final_activation="sigmoid", output_classes=1, dropout=0, num_levels=5,
                                     regularizer_factor=0, channel_multiplier=1):
     conv2d_parameters = {
         "activation": "relu",
@@ -440,40 +441,28 @@ def get_compiled_binary_lightweight_unet(input_size,
     return binary_lightweight_unet
 
 
-def get_teacher_vanilla_unet(input_size, trained_weights):
+def get_teacher_vanilla_unet(input_size, trained_weights,
+                             features_to_extract=(2, 5, 8, 11, 14, 19, 24, 29, 34, 35)):
     vanilla_unet = get_compiled_unet(input_size, pretrained_weights=trained_weights)
-    teacher_code = None
-    teacher_pred = None
-    for layer in vanilla_unet.layers:
-        if layer.name == "Level4_Contracting_Conv2D_2":
-            teacher_code = layer.output
-        elif layer.name == "output":
-            teacher_pred = layer.output
-        else:
-            pass
 
-    if teacher_code is None or teacher_pred is None:
-        raise RuntimeError("failed to find layer for extracting feature maps")
+    teacher_outputs = []
+    for layer_index, layer in enumerate(vanilla_unet.layers):
+        if layer_index in features_to_extract:
+            teacher_outputs.append(layer.output)
 
-    teacher_vanilla_unet = Model(inputs=vanilla_unet.inputs, outputs=[teacher_code, teacher_pred])
+    teacher_vanilla_unet = Model(inputs=vanilla_unet.inputs, outputs=teacher_outputs)
     teacher_vanilla_unet.load_weights(filepath=trained_weights, by_name=True)
     return teacher_vanilla_unet
 
 
-def get_student_lightweight_unet(input_size):
+def get_student_lightweight_unet(input_size,
+                                 features_to_extract=(2, 5, 8, 11, 14, 19, 24, 29, 34, 35)):
     lw_unet = get_compiled_lightweight_unet(input_size=input_size)
-    student_code = None
-    student_pred = None
-    for layer in lw_unet.layers:
-        if layer.name == "Level4_Lightweight_Contracting_SeparableConv2D_2":
-            student_code = layer.output
-        elif layer.name == "output":
-            student_pred = layer.output
-        else:
-            pass
-    if student_pred is None or student_code is None:
-        raise RuntimeError("failed to find layer for extracting feature maps")
-    student_lw_unet = Model(inputs=lw_unet.inputs, outputs=[student_code, student_pred])
+    student_outputs = []
+    for layer_index, layer in enumerate(lw_unet.layers):
+        if layer_index in features_to_extract:
+            student_outputs.append(layer.output)
+    student_lw_unet = Model(inputs=lw_unet.inputs, outputs=student_outputs)
     return student_lw_unet
 
 
@@ -504,18 +493,17 @@ if __name__ == '__main__':
     image = np.expand_dims(image, axis=[0, -1])
 
     unet = get_compiled_unet((*target_size, 1))
-    binary_unet = get_compiled_binary_unet((*target_size, 1))
+    # binary_unet = get_compiled_binary_unet((*target_size, 1))
     lw_unet = get_compiled_lightweight_unet((*target_size, 1), channel_multiplier=2)
-    blu_net = get_compiled_binary_lightweight_unet((*target_size, 1), channel_multiplier=2)
+    # blu_net = get_compiled_binary_lightweight_unet((*target_size, 1), channel_multiplier=2)
 
-    # for layer in unet.layers:
-    #     print(layer.name)
-    #
-    # print("=" * 30)
-    # for layer in lw_unet.layers:
-    #     print(layer.name)
+    for i, layer in enumerate(unet.layers):
+        print(i, layer.name)
+    print("=" * 30)
+    for i, layer in enumerate(lw_unet.layers):
+        print(i, layer.name)
 
-    pred_mask_1 = unet(image, training=False)
-    pred_mask_2 = binary_unet(image, training=False)
-    pred_mask_3 = lw_unet(image, training=False)
-    pred_mask_4 = blu_net(image, training=False)
+    # pred_mask_1 = unet(image, training=False)
+    # pred_mask_2 = binary_unet(image, training=False)
+    # pred_mask_3 = lw_unet(image, training=False)
+    # pred_mask_4 = blu_net(image, training=False)

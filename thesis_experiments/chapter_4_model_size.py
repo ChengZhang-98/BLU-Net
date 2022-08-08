@@ -39,17 +39,25 @@ def compute_model_size_in_mib(fp32_cnt=0, bool_cnt=0):
 
 
 if __name__ == '__main__':
+    # * results
+    """
+    U-Net: 118.37231826782227 MiB, 31030593 fp32 parameters
+
+    Lightweight U-Net: 15.005619049072266 MiB, 3933633 fp32 parameters
+
+    BLU-Net 0.4696694612503052 MiB, 3933633 binary parameters, 195 fp32 parameters
+    """
     input_size = (512, 512, 1)
 
     unet = get_compiled_unet(input_size)
     unet_param_cnt = count_full_precision_model_weights(unet)
     unet_size = compute_model_size_in_mib(fp32_cnt=unet_param_cnt)
-    print("U-Net: {} MiB, {} parameters".format(unet_size, unet_param_cnt))
+    print("U-Net: {} MiB, {} fp32 parameters".format(unet_size, unet_param_cnt))
 
     lw_unet = get_compiled_lightweight_unet(input_size, channel_multiplier=1)
     lw_unet_param_cnt = count_full_precision_model_weights(lw_unet)
     lw_unet_size = compute_model_size_in_mib(fp32_cnt=lw_unet_param_cnt)
-    print("Lightweight U-Net: {} MiB, {} parameters".format(lw_unet_size, lw_unet_param_cnt))
+    print("Lightweight U-Net: {} MiB, {} fp32 parameters".format(lw_unet_size, lw_unet_param_cnt))
 
     blu_net = get_compiled_binary_lightweight_unet(input_size,
                                                    num_activation_residual_levels=3,

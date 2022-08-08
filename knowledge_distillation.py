@@ -1,89 +1,95 @@
 import time
 
+import keras
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from keras import metrics
 
-
-# todo: untested
 from tqdm import tqdm
 
-from training_utils import CustomBinaryIoU
+from training_utils import binarize_and_compute_iou
 
 
 class KnowledgeDistillation:
-    def __init__(self, name, teacher, student):
+    def __init__(self, name, teacher, student, *args, **kwargs):
         self.teacher = teacher
         self.student = student
         self.student_optimizer = None
-        self.student_code_loss_fn = None
-        self.student_pred_loss_fn = None
-        self.student_code_metric_tracker = metrics.Mean(name="code_l1_error")
-        self.student_pred_metric_tracker = metrics.Mean(name="pred_l1_error")
-        self.lambda_code = None
+        self.student_loss_fn = None
+        self.current_step_loss = None
+        self.current_step_iou = None
 
-    def compile(self, optimizer, code_loss_fn, pred_loss_fn, lambda_code=1):
+    def compile(self, optimizer, loss_fn):
         self.student_optimizer = optimizer
-        self.student_code_loss_fn = code_loss_fn
-        self.student_pred_loss_fn = pred_loss_fn
-        self.lambda_code = lambda_code
+        self.student_loss_fn = loss_fn
 
     def call(self, inputs, training=None, mask=None):
-        teacher_code, teacher_pred = self.teacher(inputs=inputs, training=training)
-        student_code, student_pred = self.student(inputs=inputs, training=training)
-        return student_code, student_pred, teacher_code, teacher_pred
+        student_outputs = self.teacher(inputs=inputs, training=training)
+        teacher_outputs = self.student(inputs=inputs, training=training)
+        return student_outputs, teacher_outputs
 
     def train_step(self, image_batch, mask_batch):
-        teacher_code, teacher_pred = self.teacher(image_batch, training=False)
+        teacher_outputs = self.teacher(image_batch, training=False)
         with tf.GradientTape() as tape:
-            student_code, student_pred = self.student(image_batch, training=True)
-            code_loss = self.student_code_loss_fn(teacher_code, student_code)
-            pred_loss = self.student_pred_loss_fn(teacher_pred, student_pred)
-            loss = pred_loss + self.lambda_code * code_loss
-        grads = tape.gradient(loss, self.student.trainable_variables)
+            student_outputs = self.student(image_batch, training=True)
+            student_loss = 0.0
+            for student_output, teacher_output in zip(student_outputs, teacher_outputs):
+                student_loss += self.student_loss_fn(teacher_output, student_output)
+
+        grads = tape.gradient(student_loss, self.student.trainable_variables)
         self.student_optimizer.apply_gradients(zip(grads, self.student.trainable_variables))
 
-        self.student_code_metric_tracker.update_state(code_loss)
-        self.student_pred_metric_tracker.update_state(pred_loss)
+        self.current_step_loss = student_loss.numpy()
+        self.current_step_iou = binarize_and_compute_iou(mask_batch, student_outputs[-1]).numpy()
 
-        return dict(code_loss=self.student_code_metric_tracker.result(),
-                    pred_loss=self.student_pred_metric_tracker.result())
-
-    @property
-    def metrics(self):
-        return [self.student_code_metric_tracker, self.student_pred_metric_tracker]
+        return self.current_step_loss, self.current_step_iou
 
 
-def distill_knowledge(knowledge_distillation, start_epoch, end_epoch, train_set, val_set, checkpoint_path):
-    train_dict = {"epoch": [], "code_loss": [], "pred_loss": [], "val_binary_IoU": []}
+def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch, end_epoch, train_set, val_set,
+                      checkpoint_path, logdir):
+    train_dict = {"epoch": [], "loss": [], "binary_IoU": [], "val_binary_IoU": []}
+    train_step_count = 0
     for epoch in range(start_epoch, end_epoch):
-        train_code_loss_list = []
-        train_pred_loss_list = []
-        for step, (image_batch, mask_batch) in tqdm(enumerate(train_set), total=len(train_set)):
-            loss_dict = knowledge_distillation.train_step(image_batch, mask_batch)
-            train_code_loss_list.append(loss_dict["code_loss"])
-            train_pred_loss_list.append(loss_dict["pred_loss"])
+        # train
+        train_summary_writer = tf.summary.create_file_writer(logdir + "/train")
+        with train_summary_writer.as_default():
+            loss_list = []
+            binary_iou_list = []
+            for step, (image_batch, mask_batch) in tqdm(enumerate(train_set), total=len(train_set)):
+                loss, binary_iou = knowledge_distillation.train_step(image_batch, mask_batch)
+                loss_list.append(loss)
+                binary_iou_list.append(binary_iou)
 
-        epoch_code_loss = np.mean(train_code_loss_list)
-        epoch_pred_loss = np.mean(train_pred_loss_list)
-        train_dict["epoch"].append(epoch)
-        train_dict["code_loss"].append(epoch_code_loss)
-        train_dict["pred_loss"].append(epoch_pred_loss)
+                train_step_count += 1
 
-        val_iou_list = []
-        metric_iou = CustomBinaryIoU()
+            epoch_loss = np.mean(loss_list)
+            epoch_binary_iou = np.mean(binary_iou_list)
+            tf.summary.scalar("epoch_loss", epoch_loss, epoch)
+            tf.summary.scalar("epoch_binary_IoU", epoch_binary_iou, epoch)
+            # tf.summary.scalar("learning_rate", knowledge_distillation.student_optimizer.lr.current_lr, epoch)
+            train_dict["epoch"].append(epoch)
+            train_dict["loss"].append(epoch_loss)
+            train_dict["binary_IoU"].append(epoch_binary_iou)
 
-        for image_batch, mask_batch in val_set:
-            _, pred_mask = knowledge_distillation.student(image_batch, training=False)
-            metric_iou.update_state(mask_batch, pred_mask)
-            val_iou_list.append(metric_iou.result())
-        epoch_val_binary_iou = np.mean(val_iou_list)
-        train_dict["val_binary_IoU"].append(epoch_val_binary_iou)
+        # val
+        val_summary_writer = tf.summary.create_file_writer(logdir + "/validation")
+        with val_summary_writer.as_default():
+            val_iou_list = []
+            for image_batch, mask_batch in val_set:
+                pred_mask = knowledge_distillation.student(image_batch, training=False)[-1]
+                val_iou_list.append(binarize_and_compute_iou(y_true=mask_batch, y_pred=pred_mask).numpy())
 
-        print("epoch: {}, code_loss = {}, pred_loss = {}, val_binary_IoU = {}".format(epoch, epoch_code_loss,
-                                                                                      epoch_pred_loss,
-                                                                                      epoch_val_binary_iou))
+            epoch_val_binary_iou = np.mean(val_iou_list)
+            tf.summary.scalar("epoch_binary_IoU", epoch_val_binary_iou, epoch)
+            train_dict["val_binary_IoU"].append(epoch_val_binary_iou)
+
+        print("epoch: {}, loss = {}, binary_IoU = {}, "
+              "val_binary_IoU = {}, lr = {}".format(epoch,
+                                                    epoch_loss,
+                                                    epoch_binary_iou,
+                                                    epoch_val_binary_iou,
+                                                    knowledge_distillation.student_optimizer.lr.current_lr))
 
         # take a break
         if epoch != 0 and epoch % 40 == 0:

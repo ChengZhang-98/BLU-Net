@@ -34,6 +34,14 @@ def average_5_folds(name, one_fold_script):
     print("binary_iou = {}, binary_f1score = {}".format(np.mean(binary_iou_list), np.mean(binary_f1score_list)))
 
 
+def script_evaluate_baseline_vanilla_unet(fold_index):
+    weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/trained_weights/unet_agarpads_seg_evaluation2.hdf5"
+    baseline_unet = get_compiled_unet((512, 512, 1), pretrained_weights=weight_path)
+    test_set = _get_test_set(fold_index)
+    metric_dict = evaluate_on_test_set(baseline_unet, test_set)
+    return metric_dict
+
+
 def script_evaluate_fine_tuned_vanilla_unet(fold_index):
     trained_weight_path = None
     if fold_index == 0:
@@ -59,12 +67,23 @@ def script_evaluate_fine_tuned_vanilla_unet(fold_index):
     else:
         raise RuntimeError("unavailable fold index")
 
-    unet = get_compiled_unet((512, 512, 1), pretrained_weights=trained_weight_path)
+    vanilla_unet = get_compiled_unet((512, 512, 1), pretrained_weights=trained_weight_path)
     test_set = _get_test_set(fold_index)
 
-    metric_dict = evaluate_on_test_set(unet, test_set)
+    metric_dict = evaluate_on_test_set(vanilla_unet, test_set)
     return metric_dict
 
 
 if __name__ == '__main__':
-    average_5_folds(name="fine_tuned_unet", one_fold_script=script_evaluate_fine_tuned_vanilla_unet)
+    # todo list
+    # ! - [ ] evaluate baseline_unet on 5 folds
+    # ! - [x] evaluate vanilla_unet on 5 folds
+    # ! - [ ] evaluate lightweight_unet on 5 folds
+    # ! - [ ] evaluate blu_net oon 5 folds
+
+    # *: baseline unet
+    # binary_iou = 0.8919236063957214, binary_f1score = 0.9426580667495728
+    average_5_folds(name="baseline_unet", one_fold_script=script_evaluate_baseline_vanilla_unet)
+
+    # *: vanilla unet
+    average_5_folds(name="fine_tuned_vanilla_unet", one_fold_script=script_evaluate_fine_tuned_vanilla_unet)

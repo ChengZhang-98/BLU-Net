@@ -257,7 +257,7 @@ def script_train_lightweight_unet_from_scratch(name, fold_index, notes, seed=1):
     # *: load checkpoint
     model_checkpoint_callback = CustomModelCheckpointCallBack(ignore=0, filepath=checkpoint_filepath,
                                                               monitor="val_binary_IoU", mode="max",
-                                                              checkpoint_log_dir=logdir)
+                                                              logdir=logdir)
     # *:lr_scheduler
     lr_scheduler_callback = keras.callbacks.LearningRateScheduler(get_lr_scheduler((start_epoch + end_epoch) // 2))
     tensorboard_callback = callbacks.TensorBoard(log_dir=logdir)
