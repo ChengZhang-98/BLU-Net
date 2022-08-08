@@ -1,7 +1,6 @@
 import operator
 import os
 import time
-from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -152,23 +151,32 @@ def get_lr_scheduler(start_epoch=1):
     return lr_scheduler
 
 
-def evaluate_model_on_a_dataset(model, dataset, metric_list, postprocessing=True):
-    for batch_index, *double_or_triple in tqdm(enumerate(dataset)):
-        if dataset.use_weight_map:
+def evaluate_on_test_set(model, test_set, postprocessing=False):
+    iou_list = []
+    f1score_list = []
+    f1score_metric = CustomBinaryF1Score(threshold=0.5, name="binary_f1score")
+    iou_metric = CustomBinaryIoU(threshold=0.5, name="binary_iou")
+
+    for double_or_triple in tqdm(test_set, total=len(test_set)):
+        if test_set.use_weight_map:
             image_batch, mask_batch, weight_map_batch = double_or_triple
         else:
             image_batch, mask_batch = double_or_triple
         pred_mask_batch = model(image_batch, training=False)
 
         if postprocessing:
-            pred_mask_batch = postprocess_a_mask_batch(pred_mask_batch, binarize_threshold=0.5, remove_min_size=20)
-        for metric in metric_list:
-            metric.update_state(mask_batch, pred_mask_batch)
+            pred_mask_batch = postprocess_a_mask_batch(pred_mask_batch,
+                                                       binarize_threshold=0.5,
+                                                       remove_min_size=20)
+        f1score_metric.update_state(mask_batch, pred_mask_batch)
+        iou_metric.update_state(mask_batch, pred_mask_batch)
 
-    for metric in metric_list:
-        print("{}: {}".format(metric.name, metric.result()))
+        f1score_list.append(f1score_metric.result())
+        iou_list.append(iou_metric.result())
+        f1score_metric.reset_state()
+        iou_metric.reset_state()
 
-    return metric_list
+    return dict(binary_f1score=np.mean(f1score_list), binary_iou=np.mean(iou_list))
 
 
 class CustomBinaryIoU(tf.keras.metrics.Metric):
@@ -205,6 +213,34 @@ class CustomBinaryIoU(tf.keras.metrics.Metric):
         return self.binary_iou
 
 
+class CustomBinaryF1Score(tf.keras.metrics.Metric):
+    def __init__(self, threshold=0.5, name="Binary_F1Score", **kwargs):
+        super(CustomBinaryF1Score, self).__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.binary_f1score = self.add_weight(name=name, initializer="zeros")
+
+    def update_state(self, y_true, y_pred, sample_weights=None):
+        logical_y_true = y_true > self.threshold
+        logical_y_pred = y_pred > self.threshold
+        m11 = tf.logical_and(logical_y_true, logical_y_pred)
+        m10 = tf.logical_and(logical_y_true, tf.logical_not(logical_y_pred))
+        m01 = tf.logical_and(tf.logical_not(logical_y_true), logical_y_pred)
+
+        true_positives = tf.reduce_sum(tf.cast(m11, dtype=tf.float32), axis=(1, 2, 3))
+        false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
+        false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
+
+        mean_f1score = tf.reduce_mean(true_positives / (true_positives + 0.5 * (false_positives + false_negatives)))
+
+        self.binary_f1score.assign(mean_f1score)
+
+    def reset_state(self):
+        self.binary_f1score.assign(0.0)
+
+    def result(self):
+        return self.binary_f1score
+
+
 def append_info_to_notes(notes=None, **kwargs):
     lines = ["{} = {}".format(k, w) for k, w in kwargs.items()]
     lines = ["-" * 20] + lines + ["-" * 20]
@@ -234,6 +270,9 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
         self.best = None
         self.last = None
 
+        self.best_model_info = None
+        self.last_model_info = None
+
     def on_epoch_end(self, epoch, logs=None):
         self.last = logs[self.monitor]
         if epoch == 0:
@@ -245,24 +284,27 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
             if self.compare_current_with_best(logs[self.monitor], self.best):
                 self.best = logs[self.monitor]
                 self.model.save_weights(self.filepath, overwrite=True, save_format="h5", options=None)
-                with open(self.checkpoint_log_dir, "w+") as f:
-                    info = "epoch = {}, best {} = {}, model saved to {}".format(epoch, self.monitor, self.best,
-                                                                                self.filepath)
-                    f.write(info)
+                # with open(self.checkpoint_log_dir, "w+") as f:
+                #     info = "epoch = {}, best {} = {}, model saved to {}\n\n".format(epoch, self.monitor, self.best,
+                #                                                                     self.filepath)
+                #     f.write(info)
+                self.best_model_info = "epoch = {}, best {} = {}, model saved to {}\n\n".format(epoch, self.monitor,
+                                                                                                self.best,
+                                                                                                self.filepath)
 
     def on_train_end(self, logs=None):
         self.model.save_weights(self.filepath.replace(".h5", "-end_epoch.h5"), overwrite=True, save_format='h5')
-        with open(self.checkpoint_log_dir, "a+") as f:
-            info = "training ended, last {} = {}, model saved to {}".format(self.monitor, self.last,
-                                                                            self.filepath.replace(".h5",
-                                                                                                  "-end_epoch.h5"))
-            f.write(info)
+        info = "training ended, last {} = {}, model saved to {}".format(self.monitor, self.last,
+                                                                        self.filepath.replace(".h5",
+                                                                                              "-end_epoch.h5"))
+        # with open(self.checkpoint_log_dir, "a+") as f:
+        #     f.write(info)
+        self.last_model_info = info
+        print(self.best_model_info)
+        print(self.last_model_info)
 
 
 if __name__ == '__main__':
-    from model import get_compiled_unet
-    import keras
-
     seed = None
     batch_size = 2
     target_size = (512, 512)

@@ -150,7 +150,7 @@ class BinaryConv2D(layers.Layer):
 
 class BinarySeparableConv2D(layers.Layer):
     def __init__(self, num_residual_levels_depthwise_filter, num_residual_levels_pointwise_filter, filters, kernel_size,
-                 strides=(1, 1), padding='VALID', name=None, **kwargs):
+                 strides=(1, 1), padding='VALID', name=None, channel_multiplier=1, **kwargs):
         super(BinarySeparableConv2D, self).__init__(name=name)
         self.num_residual_levels_depthwise_filter = num_residual_levels_depthwise_filter
         self.num_residual_levels_pointwise_filter = num_residual_levels_pointwise_filter
@@ -159,11 +159,7 @@ class BinarySeparableConv2D(layers.Layer):
         self.strides = (1, *strides, 1)
         self.padding = padding.upper()
         self.kwargs = kwargs
-
-        if "depth_multiplier" in self.kwargs.keys():
-            self.channel_multiplier = kwargs["depth_multiplier"]
-        else:
-            self.channel_multiplier = 1
+        self.channel_multiplier = channel_multiplier
 
         self.depthwise_kernel = None
         self.pointwise_kernel = None
