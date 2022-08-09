@@ -48,6 +48,8 @@ def measure_flops(uncompiled_model):
 
 
 if __name__ == '__main__':
+    # todo list
+    # ! - [ ] the acceleration of the blu-net
     input_size = (512, 512, 1)
 
     # *: vanilla unet

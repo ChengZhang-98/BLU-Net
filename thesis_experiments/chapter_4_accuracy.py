@@ -30,8 +30,8 @@ def average_5_folds(name, one_fold_script):
         binary_iou_list.append(fold_metric_dict["binary_iou"])
         binary_f1score_list.append(fold_metric_dict["binary_f1score"])
 
-    print("Evaluation on {}".format(name))
-    print("binary_iou = {}, binary_f1score = {}".format(np.mean(binary_iou_list), np.mean(binary_f1score_list)))
+    print("{}, binary_iou = {}, "
+          "binary_f1score = {}".format(name, np.mean(binary_iou_list), np.mean(binary_f1score_list)))
 
 
 def script_evaluate_baseline_vanilla_unet(fold_index):
@@ -76,7 +76,7 @@ def script_evaluate_fine_tuned_vanilla_unet(fold_index):
 
 if __name__ == '__main__':
     # todo list
-    # ! - [ ] evaluate baseline_unet on 5 folds
+    # ! - [x] evaluate baseline_unet on 5 folds
     # ! - [x] evaluate vanilla_unet on 5 folds
     # ! - [ ] evaluate lightweight_unet on 5 folds
     # ! - [ ] evaluate blu_net oon 5 folds

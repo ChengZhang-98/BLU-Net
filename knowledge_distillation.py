@@ -13,6 +13,7 @@ from training_utils import binarize_and_compute_iou
 
 class KnowledgeDistillation:
     def __init__(self, name, teacher, student, *args, **kwargs):
+        self.name = name
         self.teacher = teacher
         self.student = student
         self.student_optimizer = None
@@ -50,9 +51,11 @@ def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch
                       checkpoint_path, logdir):
     train_dict = {"epoch": [], "loss": [], "binary_IoU": [], "val_binary_IoU": []}
     train_step_count = 0
+    best_epoch_iou = 0
+    train_summary_writer = tf.summary.create_file_writer(logdir + "/train")
+    val_summary_writer = tf.summary.create_file_writer(logdir + "/validation")
     for epoch in range(start_epoch, end_epoch):
         # train
-        train_summary_writer = tf.summary.create_file_writer(logdir + "/train")
         with train_summary_writer.as_default():
             loss_list = []
             binary_iou_list = []
@@ -73,7 +76,6 @@ def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch
             train_dict["binary_IoU"].append(epoch_binary_iou)
 
         # val
-        val_summary_writer = tf.summary.create_file_writer(logdir + "/validation")
         with val_summary_writer.as_default():
             val_iou_list = []
             for image_batch, mask_batch in val_set:
@@ -83,6 +85,19 @@ def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch
             epoch_val_binary_iou = np.mean(val_iou_list)
             tf.summary.scalar("epoch_binary_IoU", epoch_val_binary_iou, epoch)
             train_dict["val_binary_IoU"].append(epoch_val_binary_iou)
+
+        # save best model
+        with train_summary_writer.as_default():
+            if epoch_val_binary_iou > best_epoch_iou:
+                best_epoch_iou = epoch_val_binary_iou
+                knowledge_distillation.student.save_weights(filepath=checkpoint_path.replace(".h5", "-best.h5"),
+                                                            save_format="h5")
+                tf.summary.text("best_checkpoint",
+                                "**epoch** = {}, **best binary_IoU** = {}, "
+                                "**model saved to** {}".format(epoch,
+                                                               best_epoch_iou,
+                                                               checkpoint_path.replace(".h5", "-best.h5")),
+                                step=epoch)
 
         print("epoch: {}, loss = {}, binary_IoU = {}, "
               "val_binary_IoU = {}, lr = {}".format(epoch,
@@ -94,7 +109,12 @@ def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch
         # take a break
         if epoch != 0 and epoch % 40 == 0:
             time.sleep(120)
-
-    knowledge_distillation.student.save_weights(filepath=checkpoint_path, save_format="h5")
+    with train_summary_writer.as_default():
+        knowledge_distillation.student.save_weights(filepath=checkpoint_path, save_format="h5")
+        tf.summary.text("last_checkpoint",
+                        "**last binary_IoU** = {}, "
+                        "**model saved to** {}".format(epoch_binary_iou,
+                                                       checkpoint_path),
+                        step=0)
     df = pd.DataFrame(train_dict)
     return df

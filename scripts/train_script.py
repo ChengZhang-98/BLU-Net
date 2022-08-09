@@ -211,7 +211,7 @@ def script_train_lightweight_unet_from_scratch(name, fold_index, notes, seed=1):
     regularizer_factor = 1e-7
     use_weight_map = False
 
-    channel_multiplier = 3
+    channel_multiplier = 1
 
     # *: dataset - DIC
     image_dir = "E:/ED_MS/Semester_3/Dataset/DIC_Set/DIC_Set1_Annotated"
