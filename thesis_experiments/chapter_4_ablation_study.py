@@ -8,14 +8,10 @@ import tensorflow as tf
 from keras import callbacks
 
 from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, DataAugmentation, RandomRot90)
-from knowledge_distillation import KnowledgeDistillation, distill_knowledge
 from model import (get_compiled_unet, get_compiled_lightweight_unet,
-                   get_compiled_binary_lightweight_unet,
-                   get_teacher_vanilla_unet,
-                   get_student_lightweight_unet)
-from residual_binarization import transfer_lightweight_unet_weights_to_binary_lightweight_unet
+                   get_compiled_binary_lightweight_unet)
 from training_utils import (get_validation_plot_callback, train_val_test_split, get_lr_scheduler, append_info_to_notes,
-                            get_sleep_callback, CustomModelCheckpointCallBack, CustomLRScheduler)
+                            get_sleep_callback, CustomModelCheckpointCallBack, CustomLRTrackerCallback)
 
 
 def _func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1, use_weight_map=False, seed=1,
@@ -63,7 +59,9 @@ def _func_get_callback_list(checkpoint_filepath, monitor, mode, start_epoch, end
                                                             tensorboard_val_image_writer, max_output=4)
     callback_list.append(validation_plot_callback)
 
-    callback_list.append(get_sleep_callback(120, 40))
+    callback_list.append(CustomLRTrackerCallback(logdir))
+
+    callback_list.append(get_sleep_callback(180, 40))
 
     return callback_list
 
@@ -80,6 +78,62 @@ def _func_print_training_info(name, seed, train_set, val_set, batch_size, use_we
 
     print("train_use_weight = {}".format(use_weight_map, ))
     print("Training starts (start_epoch = {}, end_epoch = {})".format(start_epoch, end_epoch))
+
+
+# todo untested
+def script_necessity_of_transfer_learning(name, fold_index, notes, seed=1):
+    # *: train a unet from scratch, rather than via transfer learning
+    seed = seed
+    batch_size = 1
+    target_size = (512, 512)
+    use_weight_map = False
+
+    learning_rate = 1e-4
+    regularizer_factor = 1e-7
+
+    start_epoch = 0
+    end_epoch = 400
+
+    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
+    logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}-fold_{}".format(name, fold_index))
+
+    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
+                          "vanilla_unet-trained_from_scratch-fold_{}.h5".format(fold_index)
+
+    notes = append_info_to_notes(
+        notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
+        use_weight_map=use_weight_map, learning_rate=learning_rate,
+        regularizer_factor=regularizer_factor, checkpoint_filepath=checkpoint_filepath, start_epoch=start_epoch,
+        end_epoch=end_epoch)
+
+    train_set, val_set, test_set = _func_get_train_val_test_dataset(
+        target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
+
+    unet = get_compiled_unet(input_size=(*target_size, 1),
+                             num_levels=5,
+                             learning_rate=learning_rate,
+                             regularizer_factor=regularizer_factor)
+
+    callback_list = _func_get_callback_list(
+        checkpoint_filepath=checkpoint_filepath, monitor="val_binary_IoU", mode="max",
+        start_epoch=start_epoch, end_epoch=end_epoch, logdir=logdir, model=unet, val_set=val_set)
+
+    _func_print_training_info(
+        name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
+        use_weight_map=use_weight_map, start_epoch=start_epoch, end_epoch=end_epoch)
+
+    history = unet.fit(x=train_set, epochs=end_epoch, initial_epoch=start_epoch,
+                       validation_data=val_set, shuffle=False,
+                       validation_freq=1, callbacks=callback_list)
+    print("Training finished")
+
+    with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
+        f.write(notes)
+
+    log_df = pd.DataFrame(dict(epoch=history.epoch) | history.history)
+    log_df.to_pickle(os.path.join(logdir, "log_{}-fold_{}.pkl".format(name, fold_index)))
+    print("maximum val IoU = {:.4f}".format(log_df.loc[:, "val_binary_IoU"].max()))
+    return log_df
 
 
 def script_necessity_of_knowledge_distillation(name, fold_index, notes, seed=1):
@@ -139,9 +193,77 @@ def script_necessity_of_knowledge_distillation(name, fold_index, notes, seed=1):
     return log_df
 
 
+# todo untested
+def script_train_blu_net_from_scratch(name, fold_index, notes, seed=1):
+    # *: train a blu-net from scratch. prove that my framework that gradually increases the model sparsity is necessary
+    seed = seed
+    batch_size = 1
+    target_size = (512, 512)
+    use_weight_map = False
+
+    num_activation_residual_levels = 3
+    num_depthwise_conv_residual_levels = 3
+    num_pointwise_conv_residual_levels = 3
+    num_conv_residual_levels = 3
+
+    learning_rate = 1e-4
+
+    start_epoch = 0
+    end_epoch = 400
+
+    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
+    logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}-fold_{}".format(name, fold_index))
+
+    checkpoint_filepath = "E:/ED_MS/Semester_3/Codes/MyProject/checkpoints/" \
+                          "blu_net-trained_from_scratch-fold_{}.h5".format(fold_index)
+
+    notes = append_info_to_notes(
+        notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
+        use_weight_map=use_weight_map,
+        learning_rate=learning_rate, checkpoint_filepath=checkpoint_filepath, start_epoch=start_epoch,
+        end_epoch=end_epoch, num_activation_residual_levels=num_activation_residual_levels,
+        num_conv_residual_levels=num_conv_residual_levels,
+        num_depthwise_conv_residual_levels=num_depthwise_conv_residual_levels,
+        num_pointwise_conv_residual_levels=num_pointwise_conv_residual_levels)
+
+    train_set, val_set, test_set = _func_get_train_val_test_dataset(
+        target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
+
+    blu_net = get_compiled_binary_lightweight_unet(
+        (*target_size, 1),
+        num_activation_residual_levels=num_activation_residual_levels,
+        num_depthwise_conv_residual_levels=num_depthwise_conv_residual_levels,
+        num_pointwise_conv_residual_levels=num_pointwise_conv_residual_levels,
+        num_conv_residual_levels=num_conv_residual_levels,
+        learning_rate=learning_rate
+    )
+
+    callback_list = _func_get_callback_list(
+        checkpoint_filepath=checkpoint_filepath, monitor="val_binary_IoU", mode="max",
+        start_epoch=start_epoch, end_epoch=end_epoch, logdir=logdir, model=blu_net, val_set=val_set)
+
+    _func_print_training_info(
+        name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
+        use_weight_map=use_weight_map,
+        start_epoch=start_epoch, end_epoch=end_epoch)
+
+    history = blu_net.fit(x=train_set, epochs=end_epoch, initial_epoch=start_epoch,
+                          validation_data=val_set, shuffle=False, validation_freq=1,
+                          callbacks=callback_list)
+
+    print("Training finished")
+
+    with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
+        f.write(notes)
+
+    log_df = pd.DataFrame(dict(epoch=history.epoch) | history.history)
+    log_df.to_pickle(os.path.join(logdir, "log_{}-fold_{}.pkl".format(name, fold_index)))
+    print("maximum val IoU = {:.4f}".format(log_df.loc[:, "val_binary_IoU"].max()))
+    return log_df
+
+
 if __name__ == '__main__':
     notes = "ablation study - necessity of knowledge distillation\n" \
             "this experiment trains a lw_unet from scratch"
     log_knowledge_distillation = script_necessity_of_knowledge_distillation(
-        name="AB_lw_unet_trained_from_scratch"
-    )
+        name="AB_lw_unet_trained_from_scratch", fold_index=1, notes=notes)

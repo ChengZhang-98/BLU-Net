@@ -175,8 +175,6 @@ class CustomLRScheduler(tf.keras.optimizers.schedules.LearningRateSchedule):
 def evaluate_on_test_set(model, test_set, postprocessing=False):
     iou_list = []
     f1score_list = []
-    f1score_metric = CustomBinaryF1Score(threshold=0.5, name="binary_f1score")
-    iou_metric = CustomBinaryIoU(threshold=0.5, name="binary_iou")
 
     for double_or_triple in tqdm(test_set, total=len(test_set)):
         if test_set.use_weight_map:
@@ -189,18 +187,17 @@ def evaluate_on_test_set(model, test_set, postprocessing=False):
             pred_mask_batch = postprocess_a_mask_batch(pred_mask_batch,
                                                        binarize_threshold=0.5,
                                                        remove_min_size=20)
-        f1score_metric.update_state(mask_batch, pred_mask_batch)
-        iou_metric.update_state(mask_batch, pred_mask_batch)
+        batch_f1score = binarize_and_compute_f1score(mask_batch, pred_mask_batch)
+        batch_iou = binarize_and_compute_iou(mask_batch, pred_mask_batch)
 
-        f1score_list.append(f1score_metric.result())
-        iou_list.append(iou_metric.result())
-        f1score_metric.reset_state()
-        iou_metric.reset_state()
+        f1score_list.append(tf.reduce_mean(batch_f1score))
+        iou_list.append(tf.reduce_mean(batch_iou))
 
     return dict(binary_f1score=np.mean(f1score_list), binary_iou=np.mean(iou_list))
 
 
-def binarize_and_compute_iou(y_true, y_pred, threshold=0.5):
+def binarize_and_compute_iou(y_true, y_pred):
+    threshold = 0.5
     logical_y_true = y_true > threshold
     logical_y_pred = y_pred > threshold
 
@@ -212,59 +209,42 @@ def binarize_and_compute_iou(y_true, y_pred, threshold=0.5):
     false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
     false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
 
-    mean_iou = tf.reduce_mean(true_positives / (true_positives + false_negatives + false_positives + 1e-7))
-    return mean_iou
+    batch_iou = true_positives / (true_positives + false_negatives + false_positives + 1e-7)
+
+    return batch_iou
 
 
-class CustomBinaryIoU(tf.keras.metrics.Metric):
-    """
-    threshold y_true and y_predict before calculating binary IoU
-    this makes sense because data augmentation may produce interpolated values neither 0 nor 1
-    """
+def get_custom_metric_iou(name="binary_IoU"):
+    def custom_metric_iou(y_true, y_pred):
+        return binarize_and_compute_iou(y_true, y_pred)
 
-    def __init__(self, threshold=0.5, name="Binary_IoU", **kwargs):
-        super(CustomBinaryIoU, self).__init__(name=name, **kwargs)
-        self.threshold = threshold
-        self.binary_iou = self.add_weight(name=name, initializer="zeros")
-
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        mean_iou = binarize_and_compute_iou(y_true, y_pred, self.threshold)
-        self.binary_iou.assign(mean_iou)
-
-    def reset_state(self):
-        self.binary_iou.assign(0.0)
-
-    def result(self):
-        return self.binary_iou
+    custom_metric_iou.__name__ = name
+    return custom_metric_iou
 
 
-class CustomBinaryF1Score(tf.keras.metrics.Metric):
-    def __init__(self, threshold=0.5, name="Binary_F1Score", **kwargs):
-        super(CustomBinaryF1Score, self).__init__(name=name, **kwargs)
-        self.threshold = threshold
-        self.binary_f1score = self.add_weight(name=name, initializer="zeros")
+def binarize_and_compute_f1score(y_true, y_pred):
+    threshold = 0.5
+    logical_y_true = y_true > threshold
+    logical_y_pred = y_pred > threshold
+    m11 = tf.logical_and(logical_y_true, logical_y_pred)
+    m10 = tf.logical_and(logical_y_true, tf.logical_not(logical_y_pred))
+    m01 = tf.logical_and(tf.logical_not(logical_y_true), logical_y_pred)
 
-    def update_state(self, y_true, y_pred, sample_weights=None):
-        logical_y_true = y_true > self.threshold
-        logical_y_pred = y_pred > self.threshold
-        m11 = tf.logical_and(logical_y_true, logical_y_pred)
-        m10 = tf.logical_and(logical_y_true, tf.logical_not(logical_y_pred))
-        m01 = tf.logical_and(tf.logical_not(logical_y_true), logical_y_pred)
+    true_positives = tf.reduce_sum(tf.cast(m11, dtype=tf.float32), axis=(1, 2, 3))
+    false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
+    false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
 
-        true_positives = tf.reduce_sum(tf.cast(m11, dtype=tf.float32), axis=(1, 2, 3))
-        false_negatives = tf.reduce_sum(tf.cast(m10, dtype=tf.float32), axis=(1, 2, 3))
-        false_positives = tf.reduce_sum(tf.cast(m01, dtype=tf.float32), axis=(1, 2, 3))
+    batch_f1score = true_positives / (1e-7 + true_positives + 0.5 * (false_positives + false_negatives))
 
-        mean_f1score = tf.reduce_mean(
-            true_positives / (1e-7 + true_positives + 0.5 * (false_positives + false_negatives)))
+    return batch_f1score
 
-        self.binary_f1score.assign(mean_f1score)
 
-    def reset_state(self):
-        self.binary_f1score.assign(0.0)
+def get_custom_metric_f1score(name="binary_F1Score"):
+    def custom_metric_f1score(y_true, y_pred):
+        return binarize_and_compute_f1score(y_true, y_pred)
 
-    def result(self):
-        return self.binary_f1score
+    custom_metric_f1score.__name__ = name
+    return custom_metric_f1score
 
 
 def append_info_to_notes(notes=None, **kwargs):
@@ -292,10 +272,11 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
             self.compare_current_with_best = operator.ge
         else:
             self.compare_current_with_best = operator.lt
-        self.summary_writer = tf.summary.create_file_writer(logdir + "/train")
+        self.logdir = logdir
+        self.summary_writer = tf.summary.create_file_writer(os.path.join(logdir, "train"))
         self.best = None
         self.last = None
-        self.best_checkpoint = None
+        self.best_checkpoint_info = None
 
     def on_epoch_end(self, epoch, logs=None):
         self.last = logs[self.monitor]
@@ -311,7 +292,7 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
                 info = "epoch = {}, best {} = {}, model saved to {}\n\n".format(epoch, self.monitor,
                                                                                 self.best,
                                                                                 self.filepath)
-                self.best_checkpoint = info
+                self.best_checkpoint_info = info
 
     def on_train_end(self, logs=None):
         self.model.save_weights(self.filepath.replace(".h5", "-end_epoch.h5"), overwrite=True, save_format='h5')
@@ -319,9 +300,22 @@ class CustomModelCheckpointCallBack(callbacks.Callback):
                                                                         self.filepath.replace(".h5",
                                                                                               "-end_epoch.h5"))
 
-        with self.summary_writer.as_default():
-            tf.summary.text("best_checkpoint", self.best_checkpoint, step=0)
-            tf.summary.text("last_checkpoint", info, step=0)
+        with open(os.path.join(self.logdir, "checkpoint_logs.txt"), "w+") as f:
+            if self.best_checkpoint_info is not None:
+                f.write(self.best_checkpoint_info)
+            f.write(info)
+        print(self.best_checkpoint_info)
+        print(info)
+
+
+class CustomLRTrackerCallback(callbacks.Callback):
+    def __init__(self, logdir):
+        super(CustomLRTrackerCallback, self).__init__()
+        self.train_summery_writer = tf.summary.create_file_writer(os.path.join(logdir, "train"))
+
+    def on_epoch_end(self, epoch, logs=None):
+        with self.train_summery_writer.as_default():
+            tf.summary.scalar(name="learning_rate", data=logs["lr"], step=epoch)
 
 
 if __name__ == '__main__':

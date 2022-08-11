@@ -15,7 +15,7 @@ from keras.optimizers import Adam
 from tqdm import tqdm
 
 from residual_binarization import BinarySignActivation, BinaryConv2D, BinarySeparableConv2D
-from training_utils import CustomBinaryIoU
+from training_utils import get_custom_metric_iou, get_custom_metric_f1score
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -138,10 +138,8 @@ def get_compiled_unet(input_size, num_levels=5, final_activation="sigmoid", pret
     bce_loss_from_logits = final_activation != "sigmoid"
     unet_model.compile(optimizer=Adam(learning_rate=learning_rate),
                        loss=BinaryCrossentropy(name="weighted_binary_crossentropy", from_logits=bce_loss_from_logits),
-                       metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
-                                BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
-    # keras.metrics.BinaryIoU can not deal with interpolated values between 0.0 and 1.0
-    # metrics=[BinaryIoU(name="binary_IoU", target_class_ids=[1], threshold=0.5)])
+                       metrics=[get_custom_metric_iou(),
+                                get_custom_metric_f1score()])
     if pretrained_weights is not None:
         unet_model.load_weights(filepath=pretrained_weights)
 
@@ -208,8 +206,8 @@ def get_compiled_lightweight_unet(input_size, num_levels=5, output_classes=1, le
                                               channel_multiplier=channel_multiplier)
     lw_unet.compile(optimizer=Adam(learning_rate=learning_rate),
                     loss=BinaryCrossentropy(name="weighted_binary_crossentropy"),
-                    metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
-                             BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
+                    metrics=[get_custom_metric_iou(),
+                             get_custom_metric_f1score()])
     if pretrained_weight is not None:
         lw_unet.load_weights(filepath=pretrained_weight)
     return lw_unet
@@ -330,8 +328,8 @@ def get_compiled_binary_unet(input_size, num_activation_residual_levels=3, num_c
                                              num_levels=num_levels, conv_kernel_initializer_seed=initializer_seed)
     binary_unet.compile(optimizer=Adam(learning_rate=learning_rate),
                         loss=BinaryCrossentropy(name="binary_crossentropy"),
-                        metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
-                                 BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
+                        metrics=[get_custom_metric_iou(),
+                                 get_custom_metric_f1score()])
     if pretrained_weight is not None:
         binary_unet.load_weights(filepath=pretrained_weight)
     return binary_unet
@@ -432,9 +430,8 @@ def get_compiled_binary_lightweight_unet(input_size,
 
     binary_lightweight_unet.compile(optimizer=Adam(learning_rate=learning_rate),
                                     loss=BinaryCrossentropy(name="binary_crossentropy"),
-                                    metrics=[CustomBinaryIoU(threshold=0.5, name="binary_IoU"),
-                                             BinaryAccuracy(threshold=0.5, name="binary_accuracy")])
-
+                                    metrics=[get_custom_metric_iou(),
+                                             get_custom_metric_f1score()])
     if pretrained_weight is not None:
         binary_lightweight_unet.load_weights(pretrained_weight)
 
@@ -456,13 +453,17 @@ def get_teacher_vanilla_unet(input_size, trained_weights,
 
 
 def get_student_lightweight_unet(input_size,
-                                 features_to_extract=(2, 5, 8, 11, 14, 19, 24, 29, 34, 35)):
+                                 features_to_extract=(2, 5, 8, 11, 14, 19, 24, 29, 34, 35),
+                                 trained_weights=None):
     lw_unet = get_compiled_lightweight_unet(input_size=input_size)
     student_outputs = []
     for layer_index, layer in enumerate(lw_unet.layers):
         if layer_index in features_to_extract:
             student_outputs.append(layer.output)
     student_lw_unet = Model(inputs=lw_unet.inputs, outputs=student_outputs)
+    if trained_weights is not None:
+        student_lw_unet.load_weights(trained_weights, by_name=True)
+
     return student_lw_unet
 
 
@@ -503,7 +504,41 @@ if __name__ == '__main__':
     for i, layer in enumerate(lw_unet.layers):
         print(i, layer.name)
 
-    # pred_mask_1 = unet(image, training=False)
-    # pred_mask_2 = binary_unet(image, training=False)
-    # pred_mask_3 = lw_unet(image, training=False)
-    # pred_mask_4 = blu_net(image, training=False)
+    """
+        0 input
+    1 Level0_Conv2D_1
+    2 Level0_Conv2D_2
+        3 Level1_Contracting_MaxPooling2D
+    4 Level1_Contracting_Conv2D_1
+    5 Level1_Contracting_Conv2D_2
+        6 Level2_Contracting_MaxPooling2D
+    7 Level2_Contracting_Conv2D_1
+    8 Level2_Contracting_Conv2D_2
+        9 Level3_Contracting_MaxPooling2D
+    10 Level3_Contracting_Conv2D_1
+    11 Level3_Contracting_Conv2D_2
+        12 Level4_Contracting_MaxPooling2D
+    13 Level4_Contracting_Conv2D_1
+    14 Level4_Contracting_Conv2D_2
+        15 Level3_Expanding_UpSampling2D
+    16 Level3_Expanding_Conv2D_1
+        17 Level3_Expanding_Concatenate
+    18 Level3_Expanding_Conv2D_2
+    19 Level3_Expanding_Conv2D_3
+        20 Level2_Expanding_UpSampling2D
+    21 Level2_Expanding_Conv2D_1
+        22 Level2_Expanding_Concatenate
+    23 Level2_Expanding_Conv2D_2
+    24 Level2_Expanding_Conv2D_3
+        25 Level1_Expanding_UpSampling2D
+    26 Level1_Expanding_Conv2D_1
+        27 Level1_Expanding_Concatenate
+    28 Level1_Expanding_Conv2D_2
+    29 Level1_Expanding_Conv2D_3
+        30 Level0_Expanding_UpSampling2D
+    31 Level0_Expanding_Conv2D_1
+        32 Level0_Expanding_Concatenate
+    33 Level0_Expanding_Conv2D_2
+    34 Level0_Expanding_Conv2D_3
+    35 output
+    """

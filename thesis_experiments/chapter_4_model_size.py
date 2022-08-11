@@ -3,6 +3,7 @@ from keras import Model
 from tqdm import tqdm
 
 from model import get_compiled_unet, get_compiled_lightweight_unet, get_compiled_binary_lightweight_unet
+from residual_binarization import BinarySignActivation, BinaryConv2D, BinarySeparableConv2D
 
 
 def count_full_precision_model_weights(model: Model):
@@ -16,6 +17,7 @@ def count_full_precision_model_weights(model: Model):
     return parameter_cnt
 
 
+# todo list compute the model size
 def count_residual_binarized_model_weights(model: Model):
     fp32_parameter_cnt = 0
     bool_parameter_cnt = 0
@@ -23,13 +25,21 @@ def count_residual_binarized_model_weights(model: Model):
     for layer in tqdm(model.layers):
         layer_fp32_parameter_cnt = 0
         layer_bool_parameter_cnt = 0
-        for weight in layer.trainable_weights:
-            if "gamma" in weight.name.lower():
-                layer_fp32_parameter_cnt += tf.reduce_prod(weight.shape)
-            else:
-                layer_bool_parameter_cnt += tf.reduce_prod(weight.shape)
-        fp32_parameter_cnt += layer_fp32_parameter_cnt
-        bool_parameter_cnt += layer_bool_parameter_cnt
+
+        if isinstance(layer, BinarySignActivation):
+            fp32_parameter_cnt += tf.reduce_prod(layer.gamma.shape)
+        elif isinstance(layer, BinaryConv2D):
+            fp32_parameter_cnt += tf.reduce_prod(layer.gamma.shape)
+            bool_parameter_cnt += tf.reduce_prod(layer.kernel.shape) * tf.reduce_prod(layer.gamma.shape)
+            fp32_parameter_cnt += tf.reduce_prod(layer.bias.shape)
+        elif isinstance(layer, BinarySeparableConv2D):
+            fp32_parameter_cnt += tf.reduce_prod(layer.gamma_depthwise_kernel.shape)
+            fp32_parameter_cnt += tf.reduce_prod(layer.gamma_pointwise_kernel.shape)
+            bool_parameter_cnt += tf.reduce_prod(layer.gamma_depthwise_kernel.shape)
+            bool_parameter_cnt += tf.reduce_prod(layer.gamma_pointwise_kernel.shape)
+            fp32_parameter_cnt += tf.reduce_prod(layer.bias.shape)
+        else:
+            raise RuntimeError("Unsupported binary layer type: {}".format(type(layer)))
 
     return bool_parameter_cnt, fp32_parameter_cnt
 
