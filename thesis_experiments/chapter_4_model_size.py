@@ -1,8 +1,9 @@
+import keras.layers as layers
 import tensorflow as tf
 from keras import Model
 from tqdm import tqdm
 
-from model import get_compiled_unet, get_compiled_lightweight_unet, get_compiled_binary_lightweight_unet
+from model import get_compiled_binary_lightweight_unet, get_compiled_lightweight_unet, get_compiled_unet
 from residual_binarization import BinarySignActivation, BinaryConv2D, BinarySeparableConv2D
 
 
@@ -35,9 +36,14 @@ def count_residual_binarized_model_weights(model: Model):
         elif isinstance(layer, BinarySeparableConv2D):
             fp32_parameter_cnt += tf.reduce_prod(layer.gamma_depthwise_kernel.shape)
             fp32_parameter_cnt += tf.reduce_prod(layer.gamma_pointwise_kernel.shape)
-            bool_parameter_cnt += tf.reduce_prod(layer.gamma_depthwise_kernel.shape)
-            bool_parameter_cnt += tf.reduce_prod(layer.gamma_pointwise_kernel.shape)
+            bool_parameter_cnt += tf.reduce_prod(layer.gamma_depthwise_kernel.shape) * tf.reduce_prod(
+                layer.pointwise_kernel.shape)
+            bool_parameter_cnt += tf.reduce_prod(layer.gamma_pointwise_kernel.shape) * tf.reduce_prod(
+                layer.depthwise_kernel.shape)
             fp32_parameter_cnt += tf.reduce_prod(layer.bias.shape)
+        elif isinstance(layer, (layers.InputLayer, layers.MaxPool2D, layers.UpSampling2D,
+                                layers.Concatenate, layers.Activation)):
+            pass
         else:
             raise RuntimeError("Unsupported binary layer type: {}".format(type(layer)))
 
@@ -55,7 +61,7 @@ if __name__ == '__main__':
 
     Lightweight U-Net: 15.005619049072266 MiB, 3933633 fp32 parameters
 
-    BLU-Net 0.4696694612503052 MiB, 3933633 binary parameters, 195 fp32 parameters
+    BLU-Net 1.4311981201171875 MiB, 11780352 binary parameters, 7044 fp32 parameters
     """
     input_size = (512, 512, 1)
 

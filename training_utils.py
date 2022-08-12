@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from keras import callbacks
+from scipy import interpolate
 from tqdm import tqdm
 
 from data import DataGenerator, postprocess_a_mask_batch, _get_matched_data_df
@@ -149,6 +150,18 @@ def get_lr_scheduler(start_epoch=1):
             return 0.95 * lr
 
     return lr_scheduler
+
+
+def get_lr_scheduler_v2(epochs, lrs):
+    interpolator = interpolate.interp1d(epochs, lrs)
+
+    def lr_scheduler_v2(epoch, lr):
+        if epoch < np.max(epochs):
+            return interpolator(epoch)
+        else:
+            return lr * 0.95
+
+    return lr_scheduler_v2
 
 
 class CustomLRScheduler(tf.keras.optimizers.schedules.LearningRateSchedule):

@@ -47,26 +47,27 @@ def _func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1, use_w
 def _func_get_callback_list(checkpoint_filepath, monitor, mode, ignore, start_epoch, end_epoch, logdir, model, val_set):
     callback_list = []
 
+    # 0 custom checkpoint callback
     model_checkpoint_callback = CustomModelCheckpointCallBack(
         ignore=ignore, filepath=checkpoint_filepath, monitor=monitor, mode=mode,
         logdir=logdir)
     callback_list.append(model_checkpoint_callback)
-
+    # 1 custom lr scheduler
     lr_scheduler_callback = keras.callbacks.LearningRateScheduler(
         get_lr_scheduler((start_epoch + end_epoch) // 2))
     callback_list.append(lr_scheduler_callback)
-
+    # 2 tensorboard
     tensorboard_callback = callbacks.TensorBoard(log_dir=logdir)
     callback_list.append(tensorboard_callback)
-
+    # 3 custom tensorboard callback for plotting predicted masks
     tensorboard_val_image_writer = tf.summary.create_file_writer(logdir + "/val_image")
     validation_plot_callback = get_validation_plot_callback(model, val_set, [0, 1, 2, 3],
                                                             tensorboard_val_image_writer, max_output=4)
     callback_list.append(validation_plot_callback)
-
+    # 4 custom lr tracker callback
     callback_list.append(CustomLRTrackerCallback(logdir))
 
-    # *: sleep period
+    # 5, take a break periodically
     callback_list.append(get_sleep_callback(180, 40))
 
     return callback_list
@@ -145,7 +146,7 @@ def script_fine_tune_vanilla_unet_with_l2_regularizer(name, fold_index, notes, s
 
 
 def script_train_lightweight_unet_via_knowledge_distillation(name, fold_index, notes, seed=1):
-    # !： 🚩 not support 5 folds
+    # *： 🚩 support 5 folds
     seed = seed
     batch_size = 1
     target_size = (256, 256)
@@ -176,14 +177,32 @@ def script_train_lightweight_unet_via_knowledge_distillation(name, fold_index, n
         fine_tuned_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
                                       "2022-08-10_fine_tune_vanilla_unet_with_l2-fold_2/" \
                                       "vanilla_unet-fine_tuned-fold_2.h5"
+        if "decoder" in name:
+            encoder_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                                  "2022-08-11_knowledge_distillation-lw_unet-encoder-fold_2/" \
+                                  "knowledge_distillation-lw_unet-encoder-fold_2-best.h5"
+        else:
+            encoder_weight_path = None
     elif fold_index == 3:
         fine_tuned_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
                                       "2022-08-10_fine_tune_vanilla_unet_with_l2-fold_3/" \
                                       "vanilla_unet-fine_tuned-fold_3.h5"
+        if "decoder" in name:
+            encoder_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                                  "2022-08-11_knowledge_distillation-lw_unet-encoder-fold_3/" \
+                                  "knowledge_distillation-lw_unet-encoder-fold_3-best.h5"
+        else:
+            encoder_weight_path = None
     elif fold_index == 4:
         fine_tuned_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
                                       "2022-08-10_fine_tune_vanilla_unet_with_l2-fold_4/" \
                                       "vanilla_unet-fine_tuned-fold_4.h5"
+        if "decoder" in name:
+            encoder_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                                  "2022-08-11_knowledge_distillation-lw_unet-encoder-fold_4/" \
+                                  "knowledge_distillation-lw_unet-encoder-fold_4-best.h5"
+        else:
+            encoder_weight_path = None
     else:
         raise RuntimeError("unsupported fold index")
     # *: hyper-parameter
@@ -194,7 +213,7 @@ def script_train_lightweight_unet_via_knowledge_distillation(name, fold_index, n
         calculate_iou = False
     else:
         features_to_extract = (16, 18, 19, 21, 23, 24, 26, 28, 29, 31, 33, 34, 35)
-        calculate_iou = False
+        calculate_iou = True
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     logdir = os.path.join(logdir, datetime.now().strftime("%Y-%m-%d") + "_{}-fold_{}".format(name, fold_index))
@@ -248,7 +267,7 @@ def script_train_lightweight_unet_via_knowledge_distillation(name, fold_index, n
 
 
 def script_train_lightweight_unet_after_knowledge_distillation(name, fold_index, notes, seed=1):
-    # !: 🚩 not support 5 folds
+    # *: 🚩 support 5 folds
     seed = seed
     seed = seed
     batch_size = 1
@@ -263,20 +282,20 @@ def script_train_lightweight_unet_after_knowledge_distillation(name, fold_index,
                                  "knowledge_distillation-lw_unet-decoder-fold_0-best.h5"
     elif fold_index == 1:
         pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                                 "2022-08-09_knowledge_distillation-fold_1/" \
-                                 "knowledge_distillation-lw_unet-fold_1.h5"
+                                 "2022-08-11_knowledge_distillation-lw_unet-decoder-fold_1/" \
+                                 "knowledge_distillation-lw_unet-decoder-fold_1-best.h5"
     elif fold_index == 2:
         pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                                 "2022-08-09_knowledge_distillation-fold_2/" \
-                                 "knowledge_distillation-lw_unet-fold_2.h5"
+                                 "2022-08-11_knowledge_distillation-lw_unet-decoder-fold_2/" \
+                                 "knowledge_distillation-lw_unet-decoder-fold_2-best.h5"
     elif fold_index == 3:
         pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                                 "2022-08-09_knowledge_distillation-fold_3/" \
-                                 "knowledge_distillation-lw_unet-fold_3.h5"
+                                 "2022-08-11_knowledge_distillation-lw_unet-decoder-fold_3/" \
+                                 "knowledge_distillation-lw_unet-decoder-fold_3-best.h5"
     elif fold_index == 4:
         pretrained_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                                 "2022-08-09_knowledge_distillation-fold_4/" \
-                                 "knowledge_distillation-lw_unet-fold_4.h5"
+                                 "2022-08-11_knowledge_distillation-lw_unet-decoder-fold_4/" \
+                                 "knowledge_distillation-lw_unet-decoder-fold_4-best.h5"
     else:
         raise RuntimeError("unsupported fold index")
 
@@ -326,15 +345,15 @@ def script_train_lightweight_unet_after_knowledge_distillation(name, fold_index,
 
 # todo: untested
 def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
-    # !: not support 5 folds
+    # *: 🚩  support 5 folds
     seed = seed
     batch_size = 1
     target_size = (256, 256)
     use_weight_map = False
 
     num_activation_residual_levels = 3
-    num_depthwise_conv_residual_levels = 2
-    num_pointwise_conv_residual_levels = 2
+    num_depthwise_conv_residual_levels = 3
+    num_pointwise_conv_residual_levels = 3
     num_conv_residual_levels = 3
 
     learning_rate = 1e-3
@@ -360,12 +379,24 @@ def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
 
     if fold_index == 0:
         lightweight_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                                       "2022-08-09_retrain_lw_unet_after_knowledge_distillation-fold_0/" \
+                                       "2022-08-11_retrain_lw_unet_after_knowledge_distillation-fold_0/" \
                                        "lw_unet_retrained_after_knowledge_distillation-fold_0.h5"
     elif fold_index == 1:
         lightweight_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                                       "2022-08-09_retrain_lw_unet_after_knowledge_distillation-fold_1/" \
+                                       "2022-08-11_retrain_lw_unet_after_knowledge_distillation-fold_1/" \
                                        "lw_unet_retrained_after_knowledge_distillation-fold_1.h5"
+    elif fold_index == 2:
+        lightweight_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                                       "2022-08-11_retrain_lw_unet_after_knowledge_distillation-fold_2/" \
+                                       "lw_unet_retrained_after_knowledge_distillation-fold_2.h5"
+    elif fold_index == 3:
+        lightweight_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                                       "2022-08-11_retrain_lw_unet_after_knowledge_distillation-fold_3/" \
+                                       "lw_unet_retrained_after_knowledge_distillation-fold_3.h5"
+    elif fold_index == 4:
+        lightweight_unet_weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
+                                       "2022-08-11_retrain_lw_unet_after_knowledge_distillation-fold_4/" \
+                                       "lw_unet_retrained_after_knowledge_distillation-fold_4.h5"
     else:
         raise RuntimeError("Unsupported fold index")
 
@@ -428,12 +459,12 @@ def script_fine_tune_blu_net(name, fold_index, notes, seed=1):
     target_size = (256, 256)
     use_weight_map = False
 
-    num_activation_residual_levels = 3
+    num_activation_residual_levels = 2
     num_depthwise_conv_residual_levels = 2
     num_pointwise_conv_residual_levels = 2
-    num_conv_residual_levels = 3
+    num_conv_residual_levels = 2
 
-    learning_rate = 1e-4
+    learning_rate = 1e-3
 
     logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
     logdir = os.path.join(logdir,
@@ -507,37 +538,37 @@ if __name__ == '__main__':
     # ! - [ ] Perform knowledge distillation - continue training on fold 2, 3, 4
     # ! - [ ] Perform residual binarization on fold 0, 1, 2, 3, 4, 5
 
-    # *: fine tune a vanilla unet with regularizer
+    # *: - [x] fine tune a vanilla unet with regularizer
     # note_unet = "fine tune a vanilla unet with the weights from Delta 2.0\n"
     # log_df_unet = script_fine_tune_vanilla_unet_with_l2_regularizer(
     #     name="fine_tune_vanilla_unet_with_l2", fold_index=4,
     #     notes=note_unet)
 
-    # *: knowledge distillation - teacher-student
+    # *: - [x] knowledge distillation - teacher-student model
     note_kd = "train lightweight unet via knowledge distillation"
     # encoder
     # log_df_kd = script_train_lightweight_unet_via_knowledge_distillation(
     #     name="knowledge_distillation-lw_unet-encoder",
-    #     fold_index=1,
+    #     fold_index=4,
     #     notes=note_kd)
     # encoder + decoder
-    log_df_kd = script_train_lightweight_unet_via_knowledge_distillation(
-        name="knowledge_distillation-lw_unet-decoder",
-        fold_index=1,
-        notes=note_kd)
+    # log_df_kd = script_train_lightweight_unet_via_knowledge_distillation(
+    #     name="knowledge_distillation-lw_unet-decoder",
+    #     fold_index=4,
+    #     notes=note_kd)
 
-    # *: knowledge distillation - continue training. Fine tune lw_unet on the basis of knowledge distillation
+    # *: - [x] knowledge distillation - retraining with BCE loss.
     # note_retrain = "retrain lw_unet after knowledge distillation"
     # log_df_lw_unet = script_train_lightweight_unet_after_knowledge_distillation(
     #     name="retrain_lw_unet_after_knowledge_distillation",
-    #     fold_index=0,
+    #     fold_index=4,
     #     notes=note_retrain)
 
     # *: residual binarization -> BLU-Net
-    # note_blu_net = "binarize retrained lw_unet"
-    # log_df_blu_net = script_binarize_lightweight_unet(name="blu_net-residual_binarize_retrained_lw_unet",
-    #                                                   fold_index=0,
-    #                                                   notes=note_blu_net)
+    note_blu_net = "binarize retrained lw_unet"
+    log_df_blu_net = script_binarize_lightweight_unet(name="blu_net-residual_binarize_retrained_lw_unet",
+                                                      fold_index=0,
+                                                      notes=note_blu_net)
 
     # *: adjust hyper-parameters adn continue training BLU-Net, encoder stack
     # note_fine_tune_blu_net = "fine_tune_blu_net"

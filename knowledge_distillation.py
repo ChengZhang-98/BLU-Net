@@ -50,7 +50,7 @@ class KnowledgeDistillation:
 
 def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch, end_epoch, train_set, val_set,
                       checkpoint_path, logdir):
-    train_dict = {"epoch": [], "loss": [], "binary_IoU": [], "val_loss": [], "val_binary_IoU": []}
+    train_dict = {"epoch": [], "loss": [], "binary_IoU": [], "val_loss": []}
     train_step_count = 0
     best_epoch_loss = 1e8
     train_summary_writer = tf.summary.create_file_writer(os.path.join(logdir, "train"))
@@ -84,25 +84,16 @@ def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch
         # val
         with val_summary_writer.as_default():
             val_loss_list = []
-            val_iou_list = []
+
             for image_batch, mask_batch in val_set:
                 student_outputs, teacher_outputs = knowledge_distillation.call(image_batch, training=False)
                 student_loss = 0
                 for student_output, teacher_output in zip(student_outputs, teacher_outputs):
                     student_loss += knowledge_distillation.student_loss_fn(teacher_output, student_output)
                 val_loss_list.append(student_loss.numpy())
-
-                if knowledge_distillation.calculate_iou:
-                    val_iou_list.append(binarize_and_compute_iou(y_true=mask_batch, y_pred=student_output[-1]).numpy())
-                else:
-                    val_iou_list.append(np.nan)
-
-            epoch_val_binary_iou = np.mean(val_iou_list)
             epoch_val_loss = np.mean(val_loss_list)
             tf.summary.scalar("val_loss", epoch_val_loss, epoch)
-            tf.summary.scalar("epoch_binary_IoU", epoch_val_binary_iou, epoch)
             train_dict["val_loss"].append(epoch_val_loss)
-            train_dict["val_binary_IoU"].append(epoch_val_binary_iou)
 
         # save best model
         with train_summary_writer.as_default():
@@ -118,13 +109,11 @@ def distill_knowledge(knowledge_distillation: KnowledgeDistillation, start_epoch
                                 step=epoch)
 
         print("epoch: {}, loss = {}, binary_IoU = {}, "
-              "val_loss = {}, val_binary_IoU = {}, "
-              "lr = {}".format(epoch,
-                               epoch_loss,
-                               epoch_binary_iou,
-                               epoch_val_loss,
-                               epoch_val_binary_iou,
-                               knowledge_distillation.student_optimizer.lr.current_lr))
+              "val_loss = {}, lr = {}".format(epoch,
+                                              epoch_loss,
+                                              epoch_binary_iou,
+                                              epoch_val_loss,
+                                              knowledge_distillation.student_optimizer.lr.current_lr))
 
         # take a break
         if epoch != 0 and epoch % 40 == 0:
