@@ -3,7 +3,7 @@
 
 An end-to-end software framework to compress U-Net for cell segmentation while maintaining accuracy. 
 
-- Our compressed model, BLU-Net, has an 82.7× smaller size and a remarkable segmentation accuracy of 85.4% in IoU (3.4% lower than full-precision vanilla U-Net)) on our custom dataset.
+- Our compressed model, BLU-Net, has an 82.7× smaller size and a remarkable segmentation accuracy of 85.4% IoU (3.4% lower than full-precision vanilla U-Net)) on our custom dataset.
 
     <img src="https://s2.loli.net/2022/08/15/LSWGn6eCwb53jdu.jpg" width="700" />
 
