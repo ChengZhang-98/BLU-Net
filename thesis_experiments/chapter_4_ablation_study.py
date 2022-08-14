@@ -9,10 +9,11 @@ from keras import callbacks
 from data_augmentation import (HistogramVoodoo, ElasticDeform, GaussianNoise, RandomFlip, DataAugmentation, RandomRot90)
 from model import (get_compiled_lightweight_unet,
                    get_compiled_binary_lightweight_unet)
-from thesis_experiments.chapter_4_accuracy import average_5_folds, _get_test_set
+from thesis_experiments.chapter_4_accuracy import _get_test_set
 from training_utils import (train_val_test_split, get_lr_scheduler, append_info_to_notes,
                             get_sleepy_callback, CustomModelCheckpointCallBack, CustomLRTrackerCallback,
                             evaluate_on_test_set)
+from chapter_4_accuracy import average_5_folds
 
 
 def _func_get_train_val_test_dataset(target_size=(512, 512), batch_size=1, use_weight_map=False, seed=1,
@@ -235,17 +236,52 @@ def script_evaluate_lw_unet_trained_from_scratch(fold_index):
     return metric_dict
 
 
+def script_evaluate_blu_net_trained_from_scratch(fold_index):
+    match fold_index:
+        case 0:
+            weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/ablation_study/" \
+                          "2022-08-13_blu_net-train-from-scratch-fold_0/" \
+                          "blu_net-trained_from_scratch-fold_0.h5"
+        case 1:
+            weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/ablation_study/" \
+                          "2022-08-14_blu_net-train-from-scratch-fold_1/" \
+                          "blu_net-trained_from_scratch-fold_1.h5"
+        case 2:
+            weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/ablation_study/" \
+                          "2022-08-14_blu_net-train-from-scratch-fold_2/" \
+                          "blu_net-trained_from_scratch-fold_2.h5"
+        case 3:
+            weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/ablation_study/" \
+                          "2022-08-14_blu_net-train-from-scratch-fold_3/" \
+                          "blu_net-trained_from_scratch-fold_3.h5"
+        case 4:
+            weight_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/ablation_study/" \
+                          "2022-08-14_blu_net-train-from-scratch-fold_4/" \
+                          "blu_net-trained_from_scratch-fold_4.h5"
+        case _:
+            raise RuntimeError("unsupported fold_index")
+
+    blu_net = get_compiled_binary_lightweight_unet((512, 512, 1), pretrained_weight=weight_path)
+    test_set = _get_test_set()
+
+    metric_dict = evaluate_on_test_set(blu_net, test_set)
+    return metric_dict
+
+
 if __name__ == '__main__':
-    # *: ablation study 1: knowledge distillation vs training from scratch
-    # notes = "ablation study - necessity of knowledge distillation\n" \
-    #         "this experiment trains a lw_unet from scratch"
-    # log_knowledge_distillation = script_ab_of_knowledge_distillation(
-    #     name="AB_lw_unet_trained_from_scratch", fold_index=4, notes=notes)
+    # fold_index = 0, 1, 2, 3, 4
 
+    # *: ablation study 1: knowledge distillation vs training lw_unet from scratch
+    notes = "ablation study - necessity of knowledge distillation\n" \
+            "this experiment trains a lw_unet from scratch"
+    log_ab_knowledge_distillation = script_ab_of_knowledge_distillation(
+        name="AB_lw_unet_trained_from_scratch", fold_index=4, notes=notes)
     # lw_unet-trained_from_scratch, binary_iou = 0.8397658467292786, binary_f1score = 0.9123261570930481
-    # average_5_folds("lw_unet-trained_from_scratch", script_evaluate_lw_unet_trained_from_scratch)
+    average_5_folds("lw_unet-trained_from_scratch", script_evaluate_lw_unet_trained_from_scratch)
 
+    # *: ablation study 3: three-stage compression framework vs training blu_net from scratch
     notes = "ablation study - train blu-net from scratch"
-    script_train_blu_net_from_scratch(name="blu_net-train-from-scratch", fold_index=2, notes=notes)
-
-    pass
+    log_ab_whole_framework = script_train_blu_net_from_scratch(
+        name="blu_net-train-from-scratch", fold_index=4, notes=notes)
+    # blu_unet-trained_from_scratch, binary_iou = 0.6008027195930481, binary_f1score = 0.7419780492782593
+    average_5_folds("blu_unet-trained_from_scratch", one_fold_script=script_evaluate_blu_net_trained_from_scratch)
