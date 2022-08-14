@@ -189,7 +189,7 @@ def get_uncompiled_lightweight_unet(input_size, final_activation="sigmoid", outp
                                                 regularizer_factor=regularizer_factor,
                                                 channel_multiplier=channel_multiplier)
 
-    output = layers.Conv2D(output_classes, 1, activation=final_activation, name="output")(expanding_output)
+    output = layers.Conv2D(output_classes, 1, activation=final_activation, name="logit_output")(expanding_output)
 
     lw_unet_model = Model(inputs=inputs, outputs=output, name="Uncompiled_Unet")
 
@@ -264,75 +264,6 @@ def _get_binary_expanding_block(inputs, skip_connection, conv2d_layer: [BinaryCo
     conv3 = BinarySignActivation(num_residual_levels=num_activation_residual_levels,
                                  name=name + "_BinarySignActivation_3")(conv3)
     return conv3
-
-
-def get_uncompiled_binary_unet(input_size, num_activation_residual_levels, num_conv_residual_levels,
-                               output_classes, num_levels=5, conv_kernel_initializer_seed=1):
-    inputs = layers.Input(input_size, name="input")
-    filters = 64
-
-    conv = BinaryConv2D(num_residual_levels=num_conv_residual_levels, filters=filters, kernel_size=3,
-                        padding="SAME", name="Level0_BinaryConv2D_1")(inputs)
-    conv = BinarySignActivation(num_residual_levels=num_activation_residual_levels,
-                                name="Level0_BinarySignActivation_1")(conv)
-    conv = BinaryConv2D(num_residual_levels=num_conv_residual_levels, filters=filters, kernel_size=3,
-                        padding="SAME", name="Level0_BinaryConv2D_2")(conv)
-    conv = BinarySignActivation(num_residual_levels=num_activation_residual_levels,
-                                name="Level0_BinarySignActivation_2")(conv)
-
-    level = 0
-    contracting_outputs = [conv]
-    for level in range(1, num_levels):
-        filters *= 2
-        contracting_outputs.append(
-            _get_binary_contracting_block(inputs=contracting_outputs[-1],
-                                          conv2d_layer=BinaryConv2D,
-                                          num_activation_residual_levels=num_activation_residual_levels,
-                                          conv_residual_level_dict=dict(num_residual_levels=num_conv_residual_levels),
-                                          filters=filters,
-                                          padding="SAME",
-                                          kernel_initializer_seed=conv_kernel_initializer_seed,
-                                          name="Level{}_BinaryContracting".format(level))
-        )
-
-    expanding_output = contracting_outputs.pop()
-    while level > 0:
-        level -= 1
-        filters = int(filters / 2)
-        expanding_output = _get_binary_expanding_block(inputs=expanding_output,
-                                                       skip_connection=contracting_outputs.pop(),
-                                                       conv2d_layer=BinaryConv2D,
-                                                       num_activation_residual_levels=num_activation_residual_levels,
-                                                       conv_residual_level_dict=dict(
-                                                           num_residual_levels=num_conv_residual_levels),
-                                                       filters=filters,
-                                                       padding="SAME",
-                                                       kernel_initializer_seed=conv_kernel_initializer_seed,
-                                                       name="Level{}_BinaryExpanding".format(level))
-    output = BinaryConv2D(num_residual_levels=num_conv_residual_levels, filters=output_classes, kernel_size=1,
-                          name="logit_output")(expanding_output)
-    # output = BinarySignActivation(num_residual_levels=num_activation_residual_levels)(output)
-    output = layers.Activation(tf.nn.sigmoid, name="sigmoid_output")(output)
-
-    binary_unet_model = Model(inputs=inputs, outputs=output, name="UncompiledBinaryUnet")
-    return binary_unet_model
-
-
-def get_compiled_binary_unet(input_size, num_activation_residual_levels=3, num_conv_residual_levels=3,
-                             output_classes=1, num_levels=5, initializer_seed=1, learning_rate=1e-3,
-                             pretrained_weight=None):
-    binary_unet = get_uncompiled_binary_unet(input_size=input_size,
-                                             num_activation_residual_levels=num_activation_residual_levels,
-                                             num_conv_residual_levels=num_conv_residual_levels,
-                                             output_classes=output_classes,
-                                             num_levels=num_levels, conv_kernel_initializer_seed=initializer_seed)
-    binary_unet.compile(optimizer=Adam(learning_rate=learning_rate),
-                        loss=BinaryCrossentropy(name="binary_crossentropy"),
-                        metrics=[get_custom_metric_iou(),
-                                 get_custom_metric_f1score()])
-    if pretrained_weight is not None:
-        binary_unet.load_weights(filepath=pretrained_weight)
-    return binary_unet
 
 
 def get_uncompiled_binary_lightweight_unet(input_size,

@@ -15,7 +15,7 @@ from model import (get_compiled_unet, get_compiled_lightweight_unet,
                    get_student_lightweight_unet)
 from residual_binarization import transfer_lightweight_unet_weights_to_binary_lightweight_unet
 from training_utils import (get_validation_plot_callback, train_val_test_split, get_lr_scheduler, append_info_to_notes,
-                            get_sleep_callback, CustomModelCheckpointCallBack, CustomLRScheduler,
+                            get_sleepy_callback, CustomModelCheckpointCallBack, CustomLRScheduler,
                             CustomLRTrackerCallback)
 
 
@@ -68,7 +68,7 @@ def _func_get_callback_list(checkpoint_filepath, monitor, mode, ignore, start_ep
     callback_list.append(CustomLRTrackerCallback(logdir))
 
     # 5, take a break periodically
-    callback_list.append(get_sleep_callback(180, 40))
+    callback_list.append(get_sleepy_callback(180, 40))
 
     return callback_list
 
@@ -452,128 +452,35 @@ def script_binarize_lightweight_unet(name, fold_index, notes, seed=1):
     return log_df
 
 
-# * ===========================================================================
-def script_fine_tune_blu_net(name, fold_index, notes, seed=1):
-    seed = seed
-    batch_size = 1
-    target_size = (256, 256)
-    use_weight_map = False
-
-    num_activation_residual_levels = 2
-    num_depthwise_conv_residual_levels = 2
-    num_pointwise_conv_residual_levels = 2
-    num_conv_residual_levels = 2
-
-    learning_rate = 1e-3
-
-    logdir = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs"
-    logdir = os.path.join(logdir,
-                          datetime.now().strftime("%Y-%m-%d") + \
-                          "_{}-a{}_d{}_p{}_c{}-fold_{}".format(name,
-                                                               num_activation_residual_levels,
-                                                               num_depthwise_conv_residual_levels,
-                                                               num_pointwise_conv_residual_levels,
-                                                               num_conv_residual_levels,
-                                                               fold_index))
-    checkpoint_filepath = os.path.join(logdir,
-                                       "fine_tuned_blu_unet-a{}_d{}_p{}_c{}-fold_{}.h5".format(
-                                           num_activation_residual_levels,
-                                           num_depthwise_conv_residual_levels,
-                                           num_pointwise_conv_residual_levels,
-                                           num_conv_residual_levels,
-                                           fold_index))
-    start_epoch = 0
-    end_epoch = 400
-    trained_blu_net_path = "E:/ED_MS/Semester_3/Codes/MyProject/tensorboard_logs/" \
-                           "2022-08-10_blu_net-residual_binarize_retrained_lw_unet-a3_d2_p2_c3-fold_0/" \
-                           "blu_unet-a3_d2_p2_c3-fold_0.h5"
-
-    notes = append_info_to_notes(
-        notes, fold_index=fold_index, seed=seed, batch_size=batch_size, target_size=target_size,
-        use_weight_map=use_weight_map, trained_blu_net_path=trained_blu_net_path,
-        learning_rate=learning_rate, checkpoint_filepath=checkpoint_filepath, start_epoch=start_epoch,
-        end_epoch=end_epoch, num_activation_residual_levels=num_activation_residual_levels,
-        num_conv_residual_levels=num_conv_residual_levels,
-        num_depthwise_conv_residual_levels=num_depthwise_conv_residual_levels,
-        num_pointwise_conv_residual_levels=num_pointwise_conv_residual_levels)
-
-    blu_net = get_compiled_binary_lightweight_unet(
-        input_size=(*target_size, 1),
-        num_activation_residual_levels=num_activation_residual_levels,
-        num_depthwise_conv_residual_levels=num_depthwise_conv_residual_levels,
-        num_pointwise_conv_residual_levels=num_pointwise_conv_residual_levels,
-        num_conv_residual_levels=num_conv_residual_levels,
-        learning_rate=learning_rate,
-        pretrained_weight=trained_blu_net_path)
-
-    train_set, val_set, test_set = _func_get_train_val_test_dataset(
-        target_size=target_size, batch_size=batch_size, use_weight_map=use_weight_map, seed=seed, fold_index=fold_index)
-
-    callback_list = _func_get_callback_list(
-        checkpoint_filepath=checkpoint_filepath, monitor="val_binary_IoU", mode="max",
-        start_epoch=start_epoch, end_epoch=end_epoch, logdir=logdir, model=blu_net, val_set=val_set)
-
-    _func_print_training_info(
-        name=name, seed=seed, train_set=train_set, val_set=val_set, batch_size=batch_size,
-        use_weight_map=use_weight_map,
-        start_epoch=start_epoch, end_epoch=end_epoch, fold_index=fold_index)
-
-    history = blu_net.fit(x=train_set, epochs=end_epoch, initial_epoch=start_epoch,
-                          validation_data=val_set, shuffle=False, validation_freq=1,
-                          callbacks=callback_list)
-
-    print("Training finished")
-
-    with open(os.path.join(logdir, name + "_notes.txt"), "w+") as f:
-        f.write(notes)
-
-    log_df = pd.DataFrame(dict(epoch=history.epoch) | history.history)
-    log_df.to_pickle(os.path.join(logdir, "log_{}-fold_{}.pkl".format(name, fold_index)))
-    print("maximum val IoU = {:.4f}".format(log_df.loc[:, "val_binary_IoU"].max()))
-    return log_df
-
-
 if __name__ == '__main__':
-    # todo list
-    # ! - [ ] Perform knowledge distillation - continue training on fold 2, 3, 4
-    # ! - [ ] Perform residual binarization on fold 0, 1, 2, 3, 4, 5
-
     # *: - [x] fine tune a vanilla unet with regularizer
-    # note_unet = "fine tune a vanilla unet with the weights from Delta 2.0\n"
-    # log_df_unet = script_fine_tune_vanilla_unet_with_l2_regularizer(
-    #     name="fine_tune_vanilla_unet_with_l2", fold_index=4,
-    #     notes=note_unet)
+    note_unet = "fine tune a vanilla unet with the weights from Delta 2.0\n"
+    log_df_unet = script_fine_tune_vanilla_unet_with_l2_regularizer(
+        name="fine_tune_vanilla_unet_with_l2", fold_index=4,
+        notes=note_unet)
 
     # *: - [x] knowledge distillation - teacher-student model
     note_kd = "train lightweight unet via knowledge distillation"
     # encoder
-    # log_df_kd = script_train_lightweight_unet_via_knowledge_distillation(
-    #     name="knowledge_distillation-lw_unet-encoder",
-    #     fold_index=4,
-    #     notes=note_kd)
+    log_df_kd_encoder = script_train_lightweight_unet_via_knowledge_distillation(
+        name="knowledge_distillation-lw_unet-encoder",
+        fold_index=4,
+        notes=note_kd)
     # encoder + decoder
-    # log_df_kd = script_train_lightweight_unet_via_knowledge_distillation(
-    #     name="knowledge_distillation-lw_unet-decoder",
-    #     fold_index=4,
-    #     notes=note_kd)
+    log_df_kd_lw_unet = script_train_lightweight_unet_via_knowledge_distillation(
+        name="knowledge_distillation-lw_unet-decoder",
+        fold_index=4,
+        notes=note_kd)
 
     # *: - [x] knowledge distillation - retraining with BCE loss.
-    # note_retrain = "retrain lw_unet after knowledge distillation"
-    # log_df_lw_unet = script_train_lightweight_unet_after_knowledge_distillation(
-    #     name="retrain_lw_unet_after_knowledge_distillation",
-    #     fold_index=4,
-    #     notes=note_retrain)
+    note_retrain = "retrain lw_unet after knowledge distillation"
+    log_df_lw_unet = script_train_lightweight_unet_after_knowledge_distillation(
+        name="retrain_lw_unet_after_knowledge_distillation",
+        fold_index=4,
+        notes=note_retrain)
 
     # *: residual binarization -> BLU-Net
     note_blu_net = "binarize retrained lw_unet"
     log_df_blu_net = script_binarize_lightweight_unet(name="blu_net-residual_binarize_retrained_lw_unet",
-                                                      fold_index=0,
+                                                      fold_index=4,
                                                       notes=note_blu_net)
-
-    # *: adjust hyper-parameters adn continue training BLU-Net, encoder stack
-    # note_fine_tune_blu_net = "fine_tune_blu_net"
-    # log_df_fine_tuned_blu_net = script_fine_tune_blu_net(name="fine_tune_blu_net",
-    #                                                      fold_index=0,
-    #                                                      notes=note_fine_tune_blu_net)
-
-    pass

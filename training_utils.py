@@ -266,7 +266,7 @@ def append_info_to_notes(notes=None, **kwargs):
     return notes + "\n" + "\n".join(lines)
 
 
-def get_sleep_callback(sleep_length=300, per_epoch=50):
+def get_sleepy_callback(sleep_length=300, per_epoch=50):
     def take_a_break(epoch, logs):
         if epoch != 0 and epoch % per_epoch == 0:
             time.sleep(sleep_length)

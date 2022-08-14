@@ -1,13 +1,12 @@
+import keras
 import numpy as np
 import tensorflow as tf
-from tensorflow import nn
-import keras
 from keras import layers
-from keras import initializers
+from tensorflow import nn
 from tqdm import tqdm
 
 
-def binarize(x):
+def _binarize(x):
     """
     a trick of implementing straight-through estimator (hard tanh) in tensorflow
         - sign(x) for forward propagation
@@ -28,11 +27,11 @@ def get_initial_gamma_values(num_residual_levels):
     return initial_gamma
 
 
-def approximate_weights_via_residual_binarization(w, gamma):
+def _approximate_weights_via_residual_binarization(w, gamma):
     residual = w
     approximated_w = tf.zeros_like(w)
     for gamma_m in gamma:
-        temp = tf.abs(gamma_m) * binarize(residual)
+        temp = tf.abs(gamma_m) * _binarize(residual)
         residual = residual - temp
         approximated_w = approximated_w + temp
     return approximated_w
@@ -48,17 +47,6 @@ def get_binary_representation(w, gamma):
         residual = residual - tf.abs(gamma_m) * b
         gamma_b_pairs.append((gamma_m.numpy(), tf.cast(b, dtype=tf.bool).numpy()))
     return gamma_b_pairs
-
-
-def count_residual_binarization_weights(weight_list, gamma_list):
-    assert len(weight_list) == len(gamma_list), "Unmatched len(weight_list) and len(gamma_list)"
-    binary_weight_counts = 0
-    gamma_counts = 0
-    for weight, gamma in zip(weight_list, gamma_list):
-        binary_weight_counts += tf.reduce_prod(weight.shape) * tf.reduce_prod(gamma.shape)
-        gamma_counts += tf.reduce_prod(gamma.shape)
-
-    return {"binary_weight_counts": binary_weight_counts, "gamma_counts": gamma_counts}
 
 
 class BinarySignActivation(layers.Layer):
@@ -88,7 +76,7 @@ class BinarySignActivation(layers.Layer):
         #     residual = residual - temp
         #     approximated_outputs = approximated_outputs + temp
         # return approximated_outputs
-        return approximate_weights_via_residual_binarization(inputs, self.gamma)
+        return _approximate_weights_via_residual_binarization(inputs, self.gamma)
 
     def get_config(self):
         return dict(num_residual_levels=self.num_residual_levels)
@@ -132,7 +120,7 @@ class BinaryConv2D(layers.Layer):
                                      trainable=True)
 
     def call(self, inputs, *args, **kwargs):
-        approximated_kernel = approximate_weights_via_residual_binarization(w=self.kernel, gamma=self.gamma)
+        approximated_kernel = _approximate_weights_via_residual_binarization(w=self.kernel, gamma=self.gamma)
         return nn.bias_add(nn.conv2d(inputs, filters=approximated_kernel, strides=self.strides, padding=self.padding),
                            self.bias)
 
@@ -201,10 +189,10 @@ class BinarySeparableConv2D(layers.Layer):
                                                       trainable=True)
 
     def call(self, inputs, *args, **kwargs):
-        approximated_w_depthwise_filter = approximate_weights_via_residual_binarization(self.depthwise_kernel,
-                                                                                        self.gamma_depthwise_kernel)
-        approximated_w_pointwise_filter = approximate_weights_via_residual_binarization(self.pointwise_kernel,
-                                                                                        self.gamma_pointwise_kernel)
+        approximated_w_depthwise_filter = _approximate_weights_via_residual_binarization(self.depthwise_kernel,
+                                                                                         self.gamma_depthwise_kernel)
+        approximated_w_pointwise_filter = _approximate_weights_via_residual_binarization(self.pointwise_kernel,
+                                                                                         self.gamma_pointwise_kernel)
         return nn.bias_add(nn.separable_conv2d(inputs, depthwise_filter=approximated_w_depthwise_filter,
                                                pointwise_filter=approximated_w_pointwise_filter, strides=self.strides,
                                                padding=self.padding),
@@ -256,6 +244,7 @@ def transfer_unet_weights_to_binary_unet(unet, binary_unet):
 
 
 def transfer_lightweight_unet_weights_to_binary_lightweight_unet(lightweight_unet, binary_lightweight_unet):
+    # note that the last conv layer is not transferred
     list_of_tf_param_np_weight_tuples = []
     for blw_unet_layer in tqdm(binary_lightweight_unet.layers):
         blw_unet_layer_name = blw_unet_layer.name
@@ -294,15 +283,19 @@ def transfer_lightweight_unet_weights_to_binary_lightweight_unet(lightweight_une
                     np_source_bias = lw_unet_layer.bias
 
                     assert link_to_target_depthwise_kernel.shape == np_source_depthwise_kernel.shape, \
-                        "unmatched depthwise kernel size between {} and {}".format(blw_unet_layer.name, lw_unet_layer.name)
+                        "unmatched depthwise kernel size between {} and {}".format(blw_unet_layer.name,
+                                                                                   lw_unet_layer.name)
                     assert link_to_target_pointwise_kernel.shape == np_source_pointwise_kernel.shape, \
-                        "unmatched pointwise kernel size between {} and {}".format(blw_unet_layer.name, lw_unet_layer.name)
+                        "unmatched pointwise kernel size between {} and {}".format(blw_unet_layer.name,
+                                                                                   lw_unet_layer.name)
                     assert link_to_target_bias.shape == np_source_bias.shape, \
                         "unmatched bias size between {} and {}".format(blw_unet_layer.name, lw_unet_layer.name)
 
                     layer_found = True
-                    list_of_tf_param_np_weight_tuples.append((link_to_target_depthwise_kernel, np_source_depthwise_kernel))
-                    list_of_tf_param_np_weight_tuples.append((link_to_target_pointwise_kernel, np_source_pointwise_kernel))
+                    list_of_tf_param_np_weight_tuples.append(
+                        (link_to_target_depthwise_kernel, np_source_depthwise_kernel))
+                    list_of_tf_param_np_weight_tuples.append(
+                        (link_to_target_pointwise_kernel, np_source_pointwise_kernel))
                     list_of_tf_param_np_weight_tuples.append((link_to_target_bias, np_source_bias))
 
         if not layer_found:
@@ -312,15 +305,16 @@ def transfer_lightweight_unet_weights_to_binary_lightweight_unet(lightweight_une
     return binary_lightweight_unet
 
 
+def expand_blu_net_dimensions(blu_net, initial_weights):
+    pass
+
+
 if __name__ == '__main__':
     tf.keras.backend.clear_session()
-    x = tf.ones(shape=(2, 16, 16, 1))
+    from model import get_compiled_lightweight_unet, get_compiled_binary_lightweight_unet
 
-    residual_sign_activation = BinarySignActivation(3)
-    y_activate = residual_sign_activation(x, training=False)
+    lw_unet = get_compiled_lightweight_unet((512, 512, 1))
+    blu_net = get_compiled_binary_lightweight_unet((512, 512, 1))
 
-    binary_conv2d = BinaryConv2D(3, filters=2, kernel_size=3)
-    y_conv2d = binary_conv2d(x, training=False)
-
-    binary_separable_conv2d = BinarySeparableConv2D(3, 3, filters=2, kernel_size=3)
-    y_separable_conv2d = binary_separable_conv2d(x, training=False)
+    for index, layer in enumerate(blu_net.layers):
+        print(index, layer.name)
