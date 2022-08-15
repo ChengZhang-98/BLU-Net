@@ -27,7 +27,7 @@ model.py:
     functions to define unet, lightweight unet (lw_unet), and blu_net
 residual_binarization.py:
     functions and class to implement residual binary network
-training_utils:
+training_utils.py:
     custom training callbacks, learning rate schedular, loss functions, metrics, and dataset split
 ```
 
