@@ -46,7 +46,7 @@ BLU-Net
 |-  thesis_experiment
     |-  chapter_3_research_methods.py: 
     |       the model compression framework, including 3 phases.
-    |       (a) transfer learning. (b) hint learning (c) residual binarization
+    |       (a) transfer learning, (b) hint learning, (c) residual binarization.
     |-  chapter_4_accuracy.py: 
     |       measure model accuracy
     |-  chapter_4_model_size.py: 
