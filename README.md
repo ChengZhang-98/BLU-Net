@@ -1,7 +1,7 @@
 # BLU-Net
 
 
-An end-to-end network compression framework transfering knowledge from full-precision vanilla U-Net to binary U-Net (BLU-Net).
+An end-to-end network compression framework transferring knowledge from full-precision vanilla U-Net to binary lightweight U-Net (BLU-Net).
 
 - Our compressed model, BLU-Net, has an 82.7× smaller size and a remarkable segmentation accuracy of 85.4% IoU (3.4% lower than full-precision vanilla U-Net) on our custom dataset.
 
