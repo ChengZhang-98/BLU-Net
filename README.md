@@ -58,7 +58,7 @@ BLU-Net
 ```
 
 ### Weights and Dataset
-- Weights and DIC-1 dataset is [here](https://drive.google.com/drive/folders/1o9MBkHf_eMK7KcSlzOxfFtChHFMRBJm3?usp=sharing), including
+- Weights and DIC-1 dataset can be found [here](https://drive.google.com/drive/folders/1o9MBkHf_eMK7KcSlzOxfFtChHFMRBJm3?usp=sharing), including
   - Custom dataset DIC-1
   - Pretrained u-net for transfer learning
   - Trained blu-net
